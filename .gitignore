@@ -1,0 +1,28 @@
+# Generated frontend artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/build-output.txt
+
+# Generated backend artifacts
+backend/.venv/
+backend/__pycache__/
+backend/**/*.pyc
+backend/nexus_edu.db
+
+# Environment files
+.env
+.env.*
+!.env.docker.example
+!backend/.env.example
+!frontend/.env.production.example
+
+# Agent/session workspace metadata
+.claude/
+
+# Runtime logs
+*.log
+
+# Common editor and OS noise
+.DS_Store
+Thumbs.db

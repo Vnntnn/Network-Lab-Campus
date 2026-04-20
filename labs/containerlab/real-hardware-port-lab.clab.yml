@@ -1,0 +1,90 @@
+name: nexus-edu-port-banks
+topology:
+  nodes:
+    c9200l-core:
+      kind: cisco_cat9kv
+      image: vrnetlab/vr-cat9kv:17.12.01p
+      mgmt-ipv4: 192.168.100.11
+      env:
+        VCPU: 6
+        RAM: 12288
+      startup-config: common.discovery.partial.cfg
+
+    c3560v2-poe:
+      kind: cisco_iol
+      image: vrnetlab/cisco_iol:L2-17.12.01
+      type: l2
+      mgmt-ipv4: 192.168.100.13
+      startup-config: common.discovery.partial.cfg
+
+    c3550-dist:
+      kind: cisco_iol
+      image: vrnetlab/cisco_iol:L2-17.12.01
+      type: l2
+      mgmt-ipv4: 192.168.100.12
+      startup-config: common.discovery.partial.cfg
+
+    c2960-access-a:
+      kind: cisco_iol
+      image: vrnetlab/cisco_iol:L2-17.12.01
+      type: l2
+      mgmt-ipv4: 192.168.100.14
+      startup-config: common.discovery.partial.cfg
+
+    c2960-access-b:
+      kind: cisco_iol
+      image: vrnetlab/cisco_iol:L2-17.12.01
+      type: l2
+      mgmt-ipv4: 192.168.100.15
+      startup-config: common.discovery.partial.cfg
+
+    c2950-access:
+      kind: cisco_iol
+      image: vrnetlab/cisco_iol:L2-17.12.01
+      type: l2
+      mgmt-ipv4: 192.168.100.16
+      startup-config: common.discovery.partial.cfg
+
+    c4331-wan:
+      kind: cisco_csr1000v
+      image: vrnetlab/vr-csr:17.03.02
+      mgmt-ipv4: 192.168.100.17
+      startup-config: common.discovery.partial.cfg
+
+    c2901-edge:
+      kind: cisco_iol
+      image: vrnetlab/cisco_iol:17.12.01
+      mgmt-ipv4: 192.168.100.18
+      startup-config: common.discovery.partial.cfg
+
+    c2620xm-legacy:
+      kind: cisco_iol
+      image: vrnetlab/cisco_iol:17.12.01
+      mgmt-ipv4: 192.168.100.19
+      startup-config: common.discovery.partial.cfg
+
+    c3745-io-2fe:
+      kind: cisco_iol
+      image: vrnetlab/cisco_iol:17.12.01
+      mgmt-ipv4: 192.168.100.20
+      startup-config: common.discovery.partial.cfg
+
+  links:
+    - endpoints: ["c9200l-core:GigabitEthernet1/0/1", "c3550-dist:Ethernet0/1"]
+    - endpoints: ["c9200l-core:GigabitEthernet1/0/2", "c3560v2-poe:Ethernet0/1"]
+    - endpoints: ["c9200l-core:GigabitEthernet1/0/3", "c2960-access-a:Ethernet0/1"]
+    - endpoints: ["c9200l-core:GigabitEthernet1/0/4", "c2960-access-b:Ethernet0/1"]
+    - endpoints: ["c9200l-core:GigabitEthernet1/0/5", "c2950-access:Ethernet0/1"]
+    - endpoints: ["c9200l-core:GigabitEthernet1/0/6", "c4331-wan:GigabitEthernet2"]
+    - endpoints: ["c9200l-core:GigabitEthernet1/0/7", "c2901-edge:Ethernet0/1"]
+    - endpoints: ["c9200l-core:GigabitEthernet1/0/8", "c3745-io-2fe:Ethernet0/1"]
+
+    - endpoints: ["c3550-dist:Ethernet0/2", "c2620xm-legacy:Ethernet0/1"]
+    - endpoints: ["c3550-dist:Ethernet0/3", "c3745-io-2fe:Ethernet0/2"]
+
+    - endpoints: ["c3560v2-poe:Ethernet0/2", "c2960-access-a:Ethernet0/2"]
+    - endpoints: ["c3560v2-poe:Ethernet0/3", "c2960-access-b:Ethernet0/2"]
+    - endpoints: ["c3560v2-poe:Ethernet1/0", "c2950-access:Ethernet0/2"]
+
+    - endpoints: ["c2901-edge:Ethernet0/2", "c2620xm-legacy:Ethernet0/2"]
+    - endpoints: ["c4331-wan:GigabitEthernet3", "c2901-edge:Ethernet0/3"]
