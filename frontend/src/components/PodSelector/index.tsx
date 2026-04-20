@@ -16,7 +16,7 @@ import { IsometricCampusMap, type PodCampusStatus } from "@/components/Scene/Iso
 const NAV_BUTTON =
   "inline-flex items-center gap-1.5 rounded-lg border border-edge-subtle bg-depth/75 px-3 py-1.5 text-2xs font-mono text-ink-muted transition-all hover:border-edge-glow hover:text-cyan-200 micro-tap";
 const NAV_BAR =
-  "absolute left-4 right-4 top-4 z-30 flex items-center justify-between gap-3 rounded-2xl border border-edge-subtle bg-surface/88 px-4 py-3 backdrop-blur-md";
+  "absolute left-4 right-4 top-4 z-30 flex items-center justify-between gap-3 rounded-2xl border border-white/[0.07] glass-nav px-4 py-3 shadow-glass";
 
 export function PodSelector() {
   const { data: pods, isLoading, isError, error } = usePods();
@@ -130,7 +130,7 @@ export function PodSelector() {
         </div>
       </motion.header>
 
-      <div className="absolute left-4 bottom-4 z-30 flex flex-wrap items-center gap-2 rounded-2xl border border-edge-subtle bg-surface/84 px-4 py-3 backdrop-blur-md">
+      <div className="absolute left-4 bottom-4 z-30 flex flex-wrap items-center gap-2 rounded-2xl border border-white/[0.07] glass-nav px-4 py-3">
         {selectedPod ? (
           <div className="flex items-center gap-2 text-xs font-mono text-ink-secondary">
             <span className="status-dot status-dot-online animate-status-ring" />
@@ -140,14 +140,14 @@ export function PodSelector() {
           <div className="text-xs font-mono text-amber-200">{lockNotice}</div>
         ) : (
           <div className="text-xs font-mono text-ink-secondary">
-            {previewMode ? "No seeded nodes yet. Run containerlab deploy and backend/seed.py to load the lab." : `Nodes loaded: ${totalNodes}. Click any labeled building to open config.`}
+            {previewMode ? "No hardware nodes registered yet. Add devices via Manage Nodes to get started." : `${totalNodes} ${totalNodes === 1 ? "device" : "devices"} active · click any node to open config`}
           </div>
         )}
       </div>
 
       {previewMode && (
         <div className="absolute left-4 top-[84px] z-30 rounded-2xl border border-amber-300/30 bg-amber-300/12 px-3 py-2 text-[11px] font-mono text-amber-100 backdrop-blur-md">
-          Backend offline or empty. Seed from containerlab to load live nodes.
+          API offline or no devices registered. Check backend connection and add hardware nodes.
         </div>
       )}
 

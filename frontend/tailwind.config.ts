@@ -176,6 +176,22 @@ const config: Config = {
           "0%, 100%": { transform: "translate3d(0, 0, 0)" },
           "50%": { transform: "translate3d(8px, -6px, 0)" },
         },
+        "grid-scan": {
+          "0%":   { backgroundPosition: "0 0, 0 0" },
+          "100%": { backgroundPosition: "48px 48px, 48px 48px" },
+        },
+        "grid-scan-slow": {
+          "0%":   { backgroundPosition: "0 0, 0 0" },
+          "100%": { backgroundPosition: "40px 40px, 40px 40px" },
+        },
+        "sweep-x": {
+          "0%":   { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(100vw)" },
+        },
+        "node-enter": {
+          "0%":   { opacity: "0", transform: "scale(0.88) translateY(12px)" },
+          "100%": { opacity: "1", transform: "scale(1) translateY(0)" },
+        },
       },
       animation: {
         "pulse-glow": "pulse-glow 2.5s ease-in-out infinite",
@@ -190,7 +206,11 @@ const config: Config = {
         orbit: "orbit 12s linear infinite",
         float: "float 4s ease-in-out infinite",
         "status-ring": "status-ring 1.5s ease-out infinite",
-        "mesh-shift": "mesh-shift 5s ease-in-out infinite",
+        "mesh-shift":       "mesh-shift 5s ease-in-out infinite",
+        "grid-scan":        "grid-scan 22s linear infinite",
+        "grid-scan-slow":   "grid-scan-slow 40s linear infinite",
+        "sweep-x":          "sweep-x 3.5s linear infinite",
+        "node-enter":       "node-enter 0.35s cubic-bezier(0.175,0.885,0.32,1.275) both",
       },
       transitionTimingFunction: {
         spring: "cubic-bezier(0.175, 0.885, 0.32, 1.275)",

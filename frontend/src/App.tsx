@@ -117,17 +117,22 @@ export default function App() {
           {/* Aurora colour pools */}
           <div className="pointer-events-none absolute inset-0 bg-aurora-shell" />
 
-          {/* Dot grid — anchored to the viewport centre so it never
-              shifts when panels slide in/out */}
+          {/* Animated line grid — scrolls diagonally, very subtle */}
           <div
-            className="pointer-events-none absolute inset-0 bg-grid-dim bg-grid-md"
-            style={{ opacity: 0.18, backgroundPosition: "center center" }}
+            className="pointer-events-none absolute inset-0 bg-grid-animated"
+            style={{ opacity: 0.55 }}
           />
 
-          {/* Circuit cross-hatch — slightly above grid opacity */}
+          {/* Dot grid — anchored to the viewport centre */}
           <div
-            className="pointer-events-none absolute inset-0 bg-circuit"
-            style={{ opacity: 0.22, backgroundPosition: "center center" }}
+            className="pointer-events-none absolute inset-0 bg-grid-dim bg-grid-md"
+            style={{ opacity: 0.12, backgroundPosition: "center center" }}
+          />
+
+          {/* Animated circuit cross-hatch */}
+          <div
+            className="pointer-events-none absolute inset-0 bg-circuit-animated"
+            style={{ opacity: 0.14, backgroundPosition: "center center" }}
           />
         </>
       )}
