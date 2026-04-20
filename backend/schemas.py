@@ -1,8 +1,12 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Literal
 import re
+
+
+DeviceType = Literal["arista_eos", "cisco_iosxe", "cisco_iosxr"]
+TopologyDeviceType = Literal["arista_eos", "cisco_iosxe", "cisco_iosxr", "unknown"]
 
 
 # ── Lab Pod ─────────────────────────────────────────────────────────────────
@@ -11,7 +15,7 @@ class LabPodBase(BaseModel):
     pod_number: int = Field(..., ge=1, le=50)
     pod_name: str = Field(..., min_length=1, max_length=64)
     device_ip: str = Field(..., description="IPv4 address of the real device")
-    device_type: Literal["arista_eos", "cisco_iosxe", "cisco_iosxr"] = "arista_eos"
+    device_type: DeviceType = "arista_eos"
     ssh_username: str = Field(..., min_length=1, max_length=64)
     ssh_password: str = Field(..., min_length=1, max_length=128)
     description: str = Field(default="", max_length=256)
@@ -32,7 +36,7 @@ class LabPodCreate(LabPodBase):
 class LabPodUpdate(BaseModel):
     pod_name: str | None = Field(default=None, min_length=1, max_length=64)
     device_ip: str | None = Field(default=None)
-    device_type: Literal["arista_eos", "cisco_iosxe", "cisco_iosxr"] | None = None
+    device_type: DeviceType | None = None
     ssh_username: str | None = Field(default=None, max_length=64)
     ssh_password: str | None = Field(default=None, max_length=128)
     description: str | None = Field(default=None, max_length=256)
@@ -163,6 +167,20 @@ class MultiPushResult(BaseModel):
     error: str | None = None
 
 
+class DeviceHistoryEntryRead(BaseModel):
+    id: int
+    device_key: str
+    pod_id: int
+    pod_name: str
+    actor_id: str
+    commands: list[str] = Field(default_factory=list)
+    success: bool
+    output: str
+    elapsed_ms: float
+    pre_snapshot_id: int | None = None
+    created_at: datetime
+
+
 # ── Topology Discovery ──────────────────────────────────────────────────────
 
 class TopologyDeviceRead(BaseModel):
@@ -170,7 +188,7 @@ class TopologyDeviceRead(BaseModel):
     pod_number: int | None = None
     pod_name: str
     device_ip: str = ""
-    device_type: Literal["arista_eos", "cisco_iosxe", "cisco_iosxr", "unknown"] = "unknown"
+    device_type: TopologyDeviceType = "unknown"
     ssh_username: str = ""
     ssh_password: str = ""
     description: str = ""
@@ -238,7 +256,7 @@ class TopologyEdgeRead(BaseModel):
 class TopologyDiscoveryResponse(BaseModel):
     seed_pod_id: int
     seed_pod_name: str
-    discovered_at: datetime = Field(default_factory=datetime.utcnow)
+    discovered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     commands: list[str] = Field(default_factory=list)
     nodes: list[TopologyNodeRead] = Field(default_factory=list)
     edges: list[TopologyEdgeRead] = Field(default_factory=list)

@@ -149,13 +149,17 @@ export function OrchestratorPanel() {
                           <p className="text-xs text-ink-bright font-medium">{pod.pod_name}</p>
                           <p className="text-2xs text-ink-muted font-mono mt-0.5">{pod.device_ip}</p>
                         </div>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          readOnly
-                          aria-label={`Select ${pod.pod_name}`}
-                          className="accent-cyan-400 mt-0.5"
-                        />
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            "mt-0.5 inline-flex h-4 w-4 items-center justify-center rounded border text-2xs font-bold",
+                            checked
+                              ? "border-cyan-300 bg-cyan-300/15 text-cyan-200"
+                              : "border-edge-subtle bg-depth/80 text-transparent"
+                          )}
+                        >
+                          ✓
+                        </span>
                       </div>
 
                       <div className="mt-2 flex items-center gap-1.5">

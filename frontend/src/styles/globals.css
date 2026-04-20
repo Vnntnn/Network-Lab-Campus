@@ -143,6 +143,19 @@
     box-shadow: theme("boxShadow.glow-cyan-sm");
   }
 
+  /* ─ Glassmorphism nav / header ──────────────────────────────────────────── */
+  .glass-nav {
+    @apply border-b border-white/[0.06] backdrop-blur-2xl;
+    background: linear-gradient(
+      135deg,
+      rgba(13, 19, 32, 0.55) 0%,
+      rgba(7, 11, 20, 0.42) 100%
+    );
+    box-shadow:
+      0 1px 0 rgba(49, 196, 255, 0.10) inset,
+      0 8px 32px rgba(0, 0, 0, 0.42);
+  }
+
   /* ─ Grid backgrounds ────────────────────────────────────────────────────── */
   .bg-grid {
     background-image: theme("backgroundImage.grid-dim");
@@ -155,6 +168,46 @@
   .bg-circuit {
     background-image: theme("backgroundImage.circuit-h"), theme("backgroundImage.circuit-v");
     background-size: theme("backgroundSize.circuit") theme("backgroundSize.circuit");
+  }
+
+  /* ─ Animated line-grid (for config / topology pages) ───────────────────── */
+  .bg-grid-animated {
+    background-image:
+      repeating-linear-gradient(
+        0deg,
+        rgba(49, 196, 255, 0.055) 0px,
+        rgba(49, 196, 255, 0.055) 1px,
+        transparent 1px,
+        transparent 40px
+      ),
+      repeating-linear-gradient(
+        90deg,
+        rgba(49, 196, 255, 0.055) 0px,
+        rgba(49, 196, 255, 0.055) 1px,
+        transparent 1px,
+        transparent 40px
+      );
+    background-size: 40px 40px;
+    animation: grid-scan-slow 40s linear infinite;
+  }
+
+  /* ─ Animated circuit-cross-hatch overlay ─────────────────────────────── */
+  .bg-circuit-animated {
+    background-image: theme("backgroundImage.circuit-h"), theme("backgroundImage.circuit-v");
+    background-size: theme("backgroundSize.circuit") theme("backgroundSize.circuit");
+    animation: grid-scan 22s linear infinite;
+  }
+
+  /* ─ Horizontal sweep highlight ─────────────────────────────────────────── */
+  .sweep-line {
+    @apply pointer-events-none absolute left-0 top-0 h-full w-[1px] opacity-60;
+    background: linear-gradient(
+      180deg,
+      transparent 0%,
+      rgba(49, 196, 255, 0.7) 48%,
+      transparent 100%
+    );
+    animation: sweep-x 3.5s linear infinite;
   }
 
   /* ─ Terminal block ──────────────────────────────────────────────────────── */
@@ -373,6 +426,20 @@
     box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
     transform: translateY(-1px);
   }
+}
+
+/* ── Keyframes (also declared in tailwind.config.ts for utility classes) ─── */
+@keyframes grid-scan {
+  0%   { background-position: 0 0, 0 0; }
+  100% { background-position: 48px 48px, 48px 48px; }
+}
+@keyframes grid-scan-slow {
+  0%   { background-position: 0 0, 0 0; }
+  100% { background-position: 40px 40px, 40px 40px; }
+}
+@keyframes sweep-x {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100vw); }
 }
 
 /* ── Utility Overrides ───────────────────────────────────────────────────── */

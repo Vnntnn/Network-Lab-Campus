@@ -3,12 +3,11 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft, Send, Server, AlertCircle, CheckCircle2,
   PanelRightOpen, PanelRightClose, Wifi, WifiOff, Camera,
+  ChevronRight,
 } from "lucide-react";
 import { usePodStore } from "@/stores/podStore";
 import { usePushCommands, useBackendHealth } from "@/api/queries";
-import { useHistoryStore } from "@/stores/historyStore";
 import { useAppStore } from "@/stores/appStore";
-import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/Badge";
 import { ViewLoading } from "@/components/ui/ViewLoading";
 import { GuiPane } from "./GuiPane";
@@ -41,7 +40,7 @@ function ConnectionBadge() {
   if (isError || data?.status !== "ok")
     return (
       <span className="flex items-center gap-1.5 text-2xs font-mono text-crimson">
-        <WifiOff className="h-3 w-3" /> Backend offline
+        <WifiOff className="h-3 w-3" /> Offline
       </span>
     );
   return (
@@ -54,7 +53,6 @@ function ConnectionBadge() {
 export function CommandBuilder() {
   const pod        = usePodStore((s) => s.selectedPod);
   const clearPod   = usePodStore((s) => s.clearPod);
-  const addHistory = useHistoryStore((s) => s.add);
   const setView    = useAppStore((s) => s.setView);
 
   const [commands,      setCommands]      = useState<string[]>([]);
@@ -71,24 +69,13 @@ export function CommandBuilder() {
     push(
       { pod_id: activePod.id, commands },
       {
-        onSettled: (data, err) => {
-          addHistory({
-            timestamp:  new Date(),
-            podName:    activePod.pod_name,
-            podId:      activePod.id,
-            preSnapshotId: data?.pre_snapshot_id ?? null,
-            commands,
-            success:    data?.success ?? false,
-            output:     data?.output ?? (err ? `Error: ${err.message}` : ""),
-            elapsed_ms: data?.elapsed_ms ?? 0,
-          });
+        onSettled: () => {
           if (!showHistory) setShowHistory(true);
         },
       }
     );
-  }, [commands, isPending, reset, push, pod, addHistory, showHistory]);
+  }, [commands, isPending, reset, push, pod, showHistory]);
 
-  // Ctrl+Enter → push
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -117,18 +104,24 @@ export function CommandBuilder() {
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-abyss">
+
+      {/* ── Animated grid background ──────────────────────────────────── */}
+      <div className="pointer-events-none absolute inset-0 bg-grid-animated opacity-100" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_50%_at_50%_-10%,rgba(49,196,255,0.07),transparent)]" />
+
       {/* ── Header ──────────────────────────────────────────────────────── */}
-      <header className="relative z-10 flex flex-shrink-0 items-center justify-between gap-4 border-b border-edge-dim bg-abyss/88 px-6 py-3 backdrop-blur-sm">
+      <header className="relative z-10 flex flex-shrink-0 items-center justify-between gap-4 glass-nav px-6 py-3.5">
         {/* Left: navigation + pod identity */}
         <div className="flex min-w-0 items-center gap-3">
           <button
             onClick={clearPod}
-            className="flex flex-shrink-0 items-center gap-1.5 text-xs font-mono text-ink-muted transition-colors hover:text-ink-secondary micro-tap"
+            className="flex flex-shrink-0 items-center gap-1 text-xs font-mono text-ink-muted transition-colors hover:text-cyan-300 micro-tap"
           >
-            <ArrowLeft className="h-3.5 w-3.5" /> nodes
+            <ArrowLeft className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">nodes</span>
           </button>
 
-          <div className="h-4 w-px flex-shrink-0 bg-edge-subtle" />
+          <ChevronRight className="h-3 w-3 flex-shrink-0 text-ink-muted/40" />
 
           {/* Device icon + name */}
           <div className="flex min-w-0 items-center gap-2.5">
@@ -146,30 +139,40 @@ export function CommandBuilder() {
             </div>
           </div>
 
-          <Badge variant="cyan" className="flex-shrink-0">
-            {DEVICE_LABELS[pod.device_type] ?? pod.device_type}
-          </Badge>
-          <ConnectionBadge />
+          <div className="hidden items-center gap-2 sm:flex">
+            <Badge variant="cyan" className="flex-shrink-0">
+              {DEVICE_LABELS[pod.device_type] ?? pod.device_type}
+            </Badge>
+            <ConnectionBadge />
+          </div>
         </div>
 
         {/* Right: push status + panel toggles + push button */}
         <div className="flex flex-shrink-0 items-center gap-2">
           {/* Push result pill */}
-          {pushResult && (
-            <div className={cn(
-              "hidden animate-fade-in items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-mono sm:flex",
-              pushResult.success
-                ? "border-matrix/25 bg-matrix/10 text-matrix"
-                : "border-crimson/25 bg-crimson/10 text-crimson"
-            )}>
-              {pushResult.success
-                ? <CheckCircle2 className="h-3.5 w-3.5" />
-                : <AlertCircle  className="h-3.5 w-3.5" />}
-              {pushResult.success
-                ? `Pushed · ${pushResult.elapsed_ms.toFixed(0)} ms`
-                : "Push failed"}
-            </div>
-          )}
+          <AnimatePresence>
+            {pushResult && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.92, x: 8 }}
+                animate={{ opacity: 1, scale: 1, x: 0 }}
+                exit={{ opacity: 0, scale: 0.92, x: 8 }}
+                transition={{ duration: 0.18 }}
+                className={cn(
+                  "hidden items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-mono sm:flex",
+                  pushResult.success
+                    ? "border-matrix/25 bg-matrix/10 text-matrix"
+                    : "border-crimson/25 bg-crimson/10 text-crimson"
+                )}
+              >
+                {pushResult.success
+                  ? <CheckCircle2 className="h-3.5 w-3.5" />
+                  : <AlertCircle  className="h-3.5 w-3.5" />}
+                {pushResult.success
+                  ? `OK · ${pushResult.elapsed_ms.toFixed(0)} ms`
+                  : "Push failed"}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <button
             onClick={() => setShowHistory((v) => !v)}
@@ -194,48 +197,47 @@ export function CommandBuilder() {
             title="Push to device (Ctrl + Enter)"
           >
             <Send className="h-3.5 w-3.5" />
-            {isPending ? "Pushing…" : "Push to Device"}
+            {isPending ? "Pushing…" : "Push"}
           </button>
         </div>
       </header>
 
       {/* ── Device accent line under header ─────────────────────────────── */}
       <div
-        className="h-px flex-shrink-0 opacity-60"
-        style={{ background: `linear-gradient(90deg, transparent, ${accent}88 30%, ${accent}44 70%, transparent)` }}
+        className="h-[2px] flex-shrink-0"
+        style={{
+          background: `linear-gradient(90deg, transparent 0%, ${accent}99 25%, ${accent}cc 50%, ${accent}55 75%, transparent 100%)`,
+          boxShadow: `0 0 12px 0 ${accent}55`,
+        }}
       />
 
       {/* ── Workspace ───────────────────────────────────────────────────── */}
       <main className="relative z-10 flex min-h-0 flex-1 overflow-hidden">
-        {/* LEFT — Configuration Builder (GUI form) */}
+
+        {/* LEFT — Configuration (GuiPane, no extra wrapper) */}
         <section
           className={cn(
             "overflow-y-auto border-r border-edge-dim transition-[width] duration-[320ms] ease-out",
             showHistory ? "w-[34%]" : "w-1/2"
           )}
         >
-          <div className="p-5">
-            {/* Section label */}
-            <div className="section-label mb-5">Configuration Builder</div>
-            <GlassCard className="p-5">
-              <GuiPane
-                deviceType={pod.device_type}
-                onCommandsChange={setCommands}
-                onFeatureChange={setActiveFeature}
-              />
-            </GlassCard>
+          <div className="h-full p-4">
+            <GuiPane
+              deviceType={pod.device_type}
+              onCommandsChange={setCommands}
+              onFeatureChange={setActiveFeature}
+            />
           </div>
         </section>
 
-        {/* CENTER — Terminal (Preview / Verify / Show Run) */}
+        {/* CENTER — Terminal */}
         <section
           className={cn(
             "overflow-hidden transition-[width] duration-[320ms] ease-out",
             showHistory ? "w-[36%] border-r border-edge-dim" : "w-1/2"
           )}
         >
-          <div className="flex h-full min-h-0 flex-col p-5">
-            <div className="section-label mb-5">Terminal</div>
+          <div className="flex h-full min-h-0 flex-col p-4">
             <div className="min-h-0 flex-1">
               <TerminalPane
                 podId={pod.id}
@@ -265,10 +267,9 @@ export function CommandBuilder() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0, transition: { duration: 0.18, delay: 0.06 } }}
                 exit={{ opacity: 0, y: 8, transition: { duration: 0.1 } }}
-                className="flex h-full flex-col p-5"
+                className="flex h-full flex-col p-4"
               >
-                <div className="section-label mb-5">History</div>
-                <HistoryPanel />
+                <HistoryPanel deviceKey={pod.device_ip} />
               </motion.div>
             </motion.section>
           )}
@@ -276,7 +277,7 @@ export function CommandBuilder() {
       </main>
 
       {/* ── Footer keyboard hint ─────────────────────────────────────────── */}
-      <footer className="relative z-10 flex flex-shrink-0 items-center justify-between border-t border-edge-dim px-6 py-2">
+      <footer className="relative z-10 flex flex-shrink-0 items-center justify-between border-t border-edge-dim/60 px-6 py-2">
         <span className="text-2xs font-mono text-ink-muted">
           <kbd className="rounded border border-edge-subtle bg-depth px-1.5 py-0.5 text-ink-muted">Ctrl</kbd>
           {" + "}
@@ -284,8 +285,7 @@ export function CommandBuilder() {
           {" push to device"}
         </span>
         <span className="text-2xs font-mono text-ink-muted">
-          {"Terminal: "}
-          <span className="text-ink-secondary">Preview · Verify · Show Run</span>
+          Preview · Verify · Show Run
         </span>
       </footer>
 

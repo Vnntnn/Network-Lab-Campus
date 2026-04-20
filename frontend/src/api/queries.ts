@@ -56,6 +56,20 @@ export interface Snapshot {
   created_at: string;
 }
 
+export interface DeviceHistoryEntry {
+  id: number;
+  device_key: string;
+  pod_id: number;
+  pod_name: string;
+  actor_id: string;
+  commands: string[];
+  success: boolean;
+  output: string;
+  elapsed_ms: number;
+  pre_snapshot_id?: number | null;
+  created_at: string;
+}
+
 export interface BackendHealth {
   status: string;
   service: string;
@@ -95,6 +109,20 @@ export const useTopologyDiscovery = (podId: number | null, enabled = true) =>
     queryFn: async () => (await api.get<TopologyDiscoveryResponse>(`/topology/discover/${podId}`)).data,
     enabled: enabled && podId !== null,
     refetchInterval: enabled && podId !== null ? 15_000 : false,
+    refetchIntervalInBackground: false,
+  });
+
+export const useDeviceHistory = (deviceKey: string | null, limit = 50) =>
+  useQuery<DeviceHistoryEntry[]>({
+    queryKey: ["device-history", deviceKey, limit],
+    queryFn: async () =>
+      (
+        await api.get<DeviceHistoryEntry[]>(`/commands/history/device/${encodeURIComponent(deviceKey as string)}`, {
+          params: { limit },
+        })
+      ).data,
+    enabled: !!deviceKey && deviceKey.trim().length > 0,
+    refetchInterval: deviceKey ? 10_000 : false,
     refetchIntervalInBackground: false,
   });
 

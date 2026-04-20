@@ -9,6 +9,7 @@ backend/.venv/
 backend/__pycache__/
 backend/**/*.pyc
 backend/nexus_edu.db
+backend/tests/pytest_ncmp.db
 
 # Environment files
 .env

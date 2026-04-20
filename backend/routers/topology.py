@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from deps import get_actor_id
 from schemas import TopologyDiscoveryResponse
+from services.ownership import get_owned_pod
 from services.topology_discovery import discover_topology
 
 router = APIRouter(prefix="/topology", tags=["topology"])
@@ -40,8 +42,13 @@ async def discover(
     pod_id: int,
     max_hops: int = Query(3, ge=1, le=5),
     db: AsyncSession = Depends(get_db),
+    actor_id: str = Depends(get_actor_id),
 ):
-    response = await discover_topology(db, pod_id, max_hops=max_hops)
+    pod = await get_owned_pod(db, pod_id, actor_id)
+    if not pod:
+        raise HTTPException(status_code=404, detail="Pod not found")
+
+    response = await discover_topology(db, pod_id, max_hops=max_hops, owner_id=actor_id)
     await broadcast(
         {
             "type": "topology.discovery",

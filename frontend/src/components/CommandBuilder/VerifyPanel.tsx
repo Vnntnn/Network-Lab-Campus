@@ -41,7 +41,11 @@ export function VerifyPanel({ podId, activeFeature }: VerifyPanelProps) {
   const toggle = (cmd: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(cmd) ? next.delete(cmd) : next.add(cmd);
+      if (next.has(cmd)) {
+        next.delete(cmd);
+      } else {
+        next.add(cmd);
+      }
       return next;
     });
 

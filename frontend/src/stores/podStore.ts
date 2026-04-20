@@ -1,13 +1,5 @@
 import { create } from "zustand";
-
-interface LabPod {
-  id: number;
-  pod_number: number;
-  pod_name: string;
-  device_ip: string;
-  device_type: "arista_eos" | "cisco_iosxe" | "cisco_iosxr";
-  description: string;
-}
+import type { LabPod } from "@/api/queries";
 
 interface PodStore {
   selectedPod: LabPod | null;

@@ -27,3 +27,11 @@ If you are hosting on VMs, follow [docs/PRODUCTION_VM_DEPLOYMENT.md](docs/PRODUC
 If you prefer containers on your VM, use [docker-compose.yml](docker-compose.yml) with [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md).
 
 For automated Linux deployment with preflight checks and health verification, run `scripts/deploy-production.sh`.
+
+## Development Scripts
+
+- Linux/macOS: `./scripts/dev-start.sh`
+- Windows: `scripts\\dev-start.bat`
+
+Both scripts can use `BACKEND_PORT` and `FRONTEND_PORT` environment variables to override default ports.
+Backend dependencies are pinned for Python 3.11-3.13 (3.12 recommended).
