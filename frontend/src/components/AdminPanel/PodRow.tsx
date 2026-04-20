@@ -141,6 +141,8 @@ export function PodRow({ pod, index }: PodRowProps) {
             <button
               onClick={() => setConfirmDel(true)}
               className="btn-ghost text-xs py-1.5 px-2.5 gap-1 hover:border-crimson/40 hover:text-crimson"
+              title="Delete node"
+              aria-label={`Delete ${pod.pod_name}`}
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>

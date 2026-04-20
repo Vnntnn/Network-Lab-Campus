@@ -38,20 +38,6 @@ cd backend
 python seed.py
 ```
 
-## Public Smoke Test (No Private Images)
-
-From this folder:
-
-```bash
-containerlab deploy -t smoke-public-lab.clab.yml
-containerlab inspect -t smoke-public-lab.clab.yml
-containerlab destroy -t smoke-public-lab.clab.yml --cleanup
-```
-
-This gives you a fast, repeatable proof that your containerlab runtime is actually executing in your environment, even when Cisco/vrnetlab image pulls are blocked.
-
-After the lab is up, pick `c9200l-core` or `c3550-dist` as the discovery seed in the app. The node inspector will show grouped local and remote port banks instead of a flat unbounded list.
-
 ## Scope
 
 This lab is only for pre-deploy verification. It exists so you can prove the platform can discover neighbors, open SSH sessions, and push config safely before connecting the app to real hardware devices.

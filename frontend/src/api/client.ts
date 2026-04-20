@@ -1,4 +1,5 @@
 import axios from "axios";
+import { resolveActorId } from "./actor";
 
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
 
@@ -16,3 +17,10 @@ api.interceptors.response.use(
     return Promise.reject(new Error(message));
   }
 );
+
+api.interceptors.request.use((config) => {
+  const actorId = resolveActorId();
+  config.headers = config.headers ?? {};
+  (config.headers as Record<string, string>)["X-Actor-Id"] = actorId;
+  return config;
+});

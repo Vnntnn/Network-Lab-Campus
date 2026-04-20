@@ -7,7 +7,6 @@ import {
 } from "lucide-react";
 import { usePodStore } from "@/stores/podStore";
 import { usePushCommands, useBackendHealth } from "@/api/queries";
-import { useHistoryStore } from "@/stores/historyStore";
 import { useAppStore } from "@/stores/appStore";
 import { Badge } from "@/components/ui/Badge";
 import { ViewLoading } from "@/components/ui/ViewLoading";
@@ -54,7 +53,6 @@ function ConnectionBadge() {
 export function CommandBuilder() {
   const pod        = usePodStore((s) => s.selectedPod);
   const clearPod   = usePodStore((s) => s.clearPod);
-  const addHistory = useHistoryStore((s) => s.add);
   const setView    = useAppStore((s) => s.setView);
 
   const [commands,      setCommands]      = useState<string[]>([]);
@@ -71,22 +69,12 @@ export function CommandBuilder() {
     push(
       { pod_id: activePod.id, commands },
       {
-        onSettled: (data, err) => {
-          addHistory({
-            timestamp:  new Date(),
-            podName:    activePod.pod_name,
-            podId:      activePod.id,
-            preSnapshotId: data?.pre_snapshot_id ?? null,
-            commands,
-            success:    data?.success ?? false,
-            output:     data?.output ?? (err ? `Error: ${err.message}` : ""),
-            elapsed_ms: data?.elapsed_ms ?? 0,
-          });
+        onSettled: () => {
           if (!showHistory) setShowHistory(true);
         },
       }
     );
-  }, [commands, isPending, reset, push, pod, addHistory, showHistory]);
+  }, [commands, isPending, reset, push, pod, showHistory]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -281,7 +269,7 @@ export function CommandBuilder() {
                 exit={{ opacity: 0, y: 8, transition: { duration: 0.1 } }}
                 className="flex h-full flex-col p-4"
               >
-                <HistoryPanel />
+                <HistoryPanel deviceKey={pod.device_ip} />
               </motion.div>
             </motion.section>
           )}

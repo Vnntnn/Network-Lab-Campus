@@ -428,7 +428,7 @@ async def _scan_device(
 
     try:
         async with AsyncScrapli(**_conn_kwargs(pod)) as conn:
-            command_outputs: list[tuple[str, str]] = []
+            command_outputs = []
             for _, command in commands:
                 response = await conn.send_command(command)
                 command_outputs.append((command, response.result or ""))
@@ -438,17 +438,32 @@ async def _scan_device(
     observations: list[DiscoveryObservation] = []
     for protocol, command in commands:
         matching_output = next((output for current_command, output in command_outputs if current_command == command), "")
+
         observations.extend(_to_observations(protocol, command, _parse_rows(template_platform, command, matching_output)))
 
     return observations, [command for _, command in commands]
 
 
-async def discover_topology(db: AsyncSession, pod_id: int, max_hops: int = DISCOVERY_MAX_HOPS) -> TopologyDiscoveryResponse:
-    seed = await db.get(LabPod, pod_id)
+async def discover_topology(
+    db: AsyncSession,
+    pod_id: int,
+    max_hops: int = DISCOVERY_MAX_HOPS,
+    owner_id: str | None = None,
+) -> TopologyDiscoveryResponse:
+    seed_stmt = select(LabPod).where(LabPod.id == pod_id)
+    if owner_id is not None:
+        seed_stmt = seed_stmt.where(LabPod.owner_id == owner_id)
+
+    seed_result = await db.execute(seed_stmt)
+    seed = seed_result.scalar_one_or_none()
     if not seed:
         raise HTTPException(status_code=404, detail="Pod not found")
 
-    result = await db.execute(select(LabPod))
+    known_stmt = select(LabPod)
+    if owner_id is not None:
+        known_stmt = known_stmt.where(LabPod.owner_id == owner_id)
+
+    result = await db.execute(known_stmt)
     known_pods = result.scalars().all()
     pods_by_ip = {pod.device_ip: pod for pod in known_pods}
     pods_by_name: dict[str, LabPod] = {}

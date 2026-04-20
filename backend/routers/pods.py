@@ -1,53 +1,126 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_db
+from database import DEFAULT_OWNER_ID, get_db
+from deps import get_actor_id
 from models import LabPod
 from schemas import LabPodCreate, LabPodRead, LabPodUpdate, PingResponse
 from services.device_executor import run_show_commands
+from services.ownership import get_owned_pod
 
 router = APIRouter(prefix="/pods", tags=["pods"])
 
 
 @router.get("/", response_model=list[LabPodRead])
-async def list_pods(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(LabPod).order_by(LabPod.pod_number))
-    return result.scalars().all()
+async def list_pods(
+    db: AsyncSession = Depends(get_db),
+    actor_id: str = Depends(get_actor_id),
+):
+    result = await db.execute(
+        select(LabPod)
+        .where(LabPod.owner_id == actor_id)
+        .order_by(LabPod.pod_number)
+    )
+    pods = result.scalars().all()
+
+    if pods or actor_id == DEFAULT_OWNER_ID:
+        return pods
+
+    seed_result = await db.execute(
+        select(LabPod)
+        .where(LabPod.owner_id == DEFAULT_OWNER_ID)
+        .order_by(LabPod.pod_number)
+    )
+    seed_pods = seed_result.scalars().all()
+    if not seed_pods:
+        return pods
+
+    for seed_pod in seed_pods:
+        db.add(
+            LabPod(
+                owner_id=actor_id,
+                pod_number=seed_pod.pod_number,
+                pod_name=seed_pod.pod_name,
+                device_ip=seed_pod.device_ip,
+                device_type=seed_pod.device_type,
+                ssh_username=seed_pod.ssh_username,
+                ssh_password=seed_pod.ssh_password,
+                description=seed_pod.description,
+            )
+        )
+
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+
+    refreshed = await db.execute(
+        select(LabPod)
+        .where(LabPod.owner_id == actor_id)
+        .order_by(LabPod.pod_number)
+    )
+    return refreshed.scalars().all()
 
 
 @router.get("/{pod_id}", response_model=LabPodRead)
-async def get_pod(pod_id: int, db: AsyncSession = Depends(get_db)):
-    pod = await db.get(LabPod, pod_id)
+async def get_pod(
+    pod_id: int,
+    db: AsyncSession = Depends(get_db),
+    actor_id: str = Depends(get_actor_id),
+):
+    pod = await get_owned_pod(db, pod_id, actor_id)
     if not pod:
         raise HTTPException(status_code=404, detail="Pod not found")
     return pod
 
 
 @router.post("/", response_model=LabPodRead, status_code=201)
-async def create_pod(payload: LabPodCreate, db: AsyncSession = Depends(get_db)):
-    pod = LabPod(**payload.model_dump())
+async def create_pod(
+    payload: LabPodCreate,
+    db: AsyncSession = Depends(get_db),
+    actor_id: str = Depends(get_actor_id),
+):
+    pod = LabPod(owner_id=actor_id, **payload.model_dump())
     db.add(pod)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Pod number already exists for this actor")
     await db.refresh(pod)
     return pod
 
 
 @router.put("/{pod_id}", response_model=LabPodRead)
-async def update_pod(pod_id: int, payload: LabPodUpdate, db: AsyncSession = Depends(get_db)):
-    pod = await db.get(LabPod, pod_id)
+async def update_pod(
+    pod_id: int,
+    payload: LabPodUpdate,
+    db: AsyncSession = Depends(get_db),
+    actor_id: str = Depends(get_actor_id),
+):
+    pod = await get_owned_pod(db, pod_id, actor_id)
     if not pod:
         raise HTTPException(status_code=404, detail="Pod not found")
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(pod, field, value)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Pod number already exists for this actor")
     await db.refresh(pod)
     return pod
 
 
 @router.delete("/{pod_id}", status_code=204)
-async def delete_pod(pod_id: int, db: AsyncSession = Depends(get_db)):
-    pod = await db.get(LabPod, pod_id)
+async def delete_pod(
+    pod_id: int,
+    db: AsyncSession = Depends(get_db),
+    actor_id: str = Depends(get_actor_id),
+):
+    pod = await get_owned_pod(db, pod_id, actor_id)
     if not pod:
         raise HTTPException(status_code=404, detail="Pod not found")
     await db.delete(pod)
@@ -55,9 +128,13 @@ async def delete_pod(pod_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{pod_id}/ping", response_model=PingResponse)
-async def ping_pod(pod_id: int, db: AsyncSession = Depends(get_db)):
+async def ping_pod(
+    pod_id: int,
+    db: AsyncSession = Depends(get_db),
+    actor_id: str = Depends(get_actor_id),
+):
     """SSH into the device and run 'show version' to verify reachability."""
-    pod = await db.get(LabPod, pod_id)
+    pod = await get_owned_pod(db, pod_id, actor_id)
     if not pod:
         raise HTTPException(status_code=404, detail="Pod not found")
     result = await run_show_commands(pod, ["show version"])

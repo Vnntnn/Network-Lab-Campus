@@ -28,7 +28,7 @@ export function PodSelector() {
 
   usePodLockFeed();
 
-  const previewNodes = pods ?? [];
+  const previewNodes = useMemo(() => pods ?? [], [pods]);
   const totalNodes = previewNodes.length;
   const previewMode = totalNodes === 0;
 

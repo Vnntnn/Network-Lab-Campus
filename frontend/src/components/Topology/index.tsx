@@ -232,9 +232,13 @@ export function TopologyView() {
     [discoveryQuery.data]
   );
   const discoveryWarnings = discoveryQuery.data?.warnings ?? [];
+  const refetchDiscovery = discoveryQuery.refetch;
 
   const canvasNodes = discoveryMode ? discoveryNodes : mapNodes;
-  const canvasEdges = discoveryMode ? discoveryQuery.data?.edges ?? [] : edges;
+  const canvasEdges = useMemo(
+    () => (discoveryMode ? discoveryQuery.data?.edges ?? [] : edges),
+    [discoveryMode, discoveryQuery.data?.edges, edges]
+  );
 
   const nodeNames = useMemo(
     () => new Map(canvasNodes.map((node) => [node.id, node.data.pod.pod_name])),
@@ -312,8 +316,8 @@ export function TopologyView() {
     if (discoverySeedId === null) return;
 
     // Inventory changed while discovery is active; refresh immediately.
-    void discoveryQuery.refetch();
-  }, [podCount, discoverySeedId, discoveryQuery.refetch, pods]);
+    void refetchDiscovery();
+  }, [podCount, discoverySeedId, pods, refetchDiscovery]);
 
   useEffect(() => {
     if (discoveryMode) return;

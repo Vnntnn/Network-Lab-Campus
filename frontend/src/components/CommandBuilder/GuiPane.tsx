@@ -667,7 +667,7 @@ function DhcpForm({ deviceType, onCommands }: { deviceType: string; onCommands: 
 
 // ── ACL form ──────────────────────────────────────────────────────────────
 
-export function buildAclCommands(d: AclFormData, _dt: string): string[] {
+export function buildAclCommands(d: AclFormData): string[] {
   const cmds: string[] = [];
   if (d.acl_type === "standard") {
     cmds.push(`ip access-list standard ${d.acl_id}`);
@@ -697,7 +697,7 @@ function AclForm({ deviceType, onCommands }: { deviceType: string; onCommands: (
   useEffect(() => {
     const sub = watch((values) => {
       const r = aclSchema.safeParse(values);
-      onCommands(r.success ? buildAclCommands(r.data, deviceType) : []);
+      onCommands(r.success ? buildAclCommands(r.data) : []);
     });
     return () => sub.unsubscribe();
   }, [watch, onCommands, deviceType]);
@@ -772,7 +772,7 @@ function AclForm({ deviceType, onCommands }: { deviceType: string; onCommands: (
 
 // ── NAT form ──────────────────────────────────────────────────────────────
 
-export function buildNatCommands(d: NatFormData, _dt: string): string[] {
+export function buildNatCommands(d: NatFormData): string[] {
   const cmds: string[] = [];
   cmds.push(`interface ${d.inside_interface}`, "   ip nat inside", "!");
   cmds.push(`interface ${d.outside_interface}`, "   ip nat outside", "!");
@@ -799,7 +799,7 @@ function NatForm({ deviceType, onCommands }: { deviceType: string; onCommands: (
   useEffect(() => {
     const sub = watch((values) => {
       const r = natSchema.safeParse(values);
-      onCommands(r.success ? buildNatCommands(r.data, deviceType) : []);
+      onCommands(r.success ? buildNatCommands(r.data) : []);
     });
     return () => sub.unsubscribe();
   }, [watch, onCommands, deviceType]);
@@ -952,7 +952,7 @@ function PortChannelForm({ deviceType, onCommands }: { deviceType: string; onCom
 
 // ── STP form ──────────────────────────────────────────────────────────────
 
-export function buildStpCommands(d: StpFormData, _dt: string): string[] {
+export function buildStpCommands(d: StpFormData): string[] {
   const cmds: string[] = [];
   cmds.push(`spanning-tree mode ${d.mode}`);
   const vlan = d.vlan_id ?? 1;
@@ -982,7 +982,7 @@ function StpForm({ deviceType, onCommands }: { deviceType: string; onCommands: (
   useEffect(() => {
     const sub = watch((values) => {
       const r = stpSchema.safeParse(values);
-      onCommands(r.success ? buildStpCommands(r.data, deviceType) : []);
+      onCommands(r.success ? buildStpCommands(r.data) : []);
     });
     return () => sub.unsubscribe();
   }, [watch, onCommands, deviceType]);
