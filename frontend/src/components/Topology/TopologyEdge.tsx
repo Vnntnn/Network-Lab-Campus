@@ -1,18 +1,48 @@
 import { memo, type MouseEvent } from "react";
 import { BaseEdge, getBezierPath, type EdgeProps } from "@xyflow/react";
 import type { TopologyEdgeData } from "@/types/topology";
-import { formatInterfaceSummary, normalizeInterfaces } from "./portUtils";
+import { normalizeInterfaces, formatInterfaceSummary } from "./portUtils";
 
 const EDGE_EDIT_EVENT = "topology-edge-edit";
 
-const DISCOVERY_LABEL_WIDTH = 180;
-const DISCOVERY_LABEL_HEIGHT = 24;
-const SELECTED_LABEL_WIDTH = 96;
-const SELECTED_LABEL_HEIGHT = 24;
-const RECENT_LABEL_WIDTH = 68;
-const RECENT_LABEL_HEIGHT = 22;
-const PORT_LABEL_WIDTH = 128;
-const PORT_LABEL_HEIGHT = 24;
+// ── Port label chip rendered in SVG space ─────────────────────────────────────
+
+function PortTag({
+  x,
+  y,
+  label,
+  accent,
+}: {
+  x: number;
+  y: number;
+  label: string;
+  accent: string;
+}) {
+  const W = Math.max(label.length * 5.8 + 14, 38);
+  const H = 14;
+  return (
+    <g>
+      <rect
+        x={x - W / 2} y={y - H / 2}
+        width={W} height={H} rx={3}
+        fill="rgba(3,6,14,0.90)"
+        stroke={accent} strokeWidth={0.75}
+        opacity={0.95}
+      />
+      <text
+        x={x} y={y + 4.6}
+        textAnchor="middle"
+        fontFamily="'Cascadia Code','Fira Mono','Consolas',monospace"
+        fontSize={8.5} letterSpacing={0.3}
+        fill={accent}
+      >
+        {label}
+      </text>
+    </g>
+  );
+}
+
+// ── TopologyEdge ──────────────────────────────────────────────────────────────
 
 export const TopologyEdge = memo(function TopologyEdge({
   id,
@@ -28,130 +58,126 @@ export const TopologyEdge = memo(function TopologyEdge({
     sourceY,
     targetX,
     targetY,
-    curvature: 0.18,
+    curvature: 0.05,
   });
 
-  const edgeData = (data ?? {}) as TopologyEdgeData;
+  const edgeData   = (data ?? {}) as TopologyEdgeData;
   const sourceLabel = edgeData.sourceLabel ?? "Eth0";
   const targetLabel = edgeData.targetLabel ?? "Eth0";
-  const sourceInterfaces = normalizeInterfaces(edgeData.sourceInterfaces);
-  const targetInterfaces = normalizeInterfaces(edgeData.targetInterfaces);
-  const sourcePortLabel = formatInterfaceSummary(sourceInterfaces, sourceLabel);
-  const targetPortLabel = formatInterfaceSummary(targetInterfaces, targetLabel);
-  const sourcePortTitle = sourceInterfaces.length > 0 ? `${sourceLabel}: ${sourceInterfaces.join(", ")}` : sourceLabel;
-  const targetPortTitle = targetInterfaces.length > 0 ? `${targetLabel}: ${targetInterfaces.join(", ")}` : targetLabel;
-  const bandwidthMbps = edgeData.bandwidthMbps ?? (edgeData.isDiscovery ? null : 1000);
-  const latencyMs = edgeData.latencyMs ?? (edgeData.isDiscovery ? null : 5);
-  const adminState = edgeData.adminState ?? "up";
-  const emphasized = selected || edgeData.recent;
-  const discoveryLabel = (edgeData.discoveryProtocols?.length ?? 0) > 0
-    ? edgeData.discoveryProtocols!.map((protocol) => protocol.toUpperCase()).join(" · ")
-    : "DISCOVERY";
+  const srcIfaces   = normalizeInterfaces(edgeData.sourceInterfaces);
+  const tgtIfaces   = normalizeInterfaces(edgeData.targetInterfaces);
+  const srcPort     = formatInterfaceSummary(srcIfaces, sourceLabel);
+  const tgtPort     = formatInterfaceSummary(tgtIfaces, targetLabel);
+  const adminState  = edgeData.adminState ?? "up";
+  const emphasized  = selected || Boolean(edgeData.recent);
 
-  const stateStroke =
-    adminState === "down"
-      ? "rgba(247,85,108,0.9)"
-      : adminState === "maintenance"
-        ? "rgba(255,184,87,0.92)"
-        : "rgba(49,196,255,0.92)";
-  const idleStroke =
-    adminState === "down"
-      ? "rgba(247,85,108,0.56)"
-      : adminState === "maintenance"
-        ? "rgba(255,184,87,0.56)"
-        : "rgba(49,196,255,0.54)";
+  // State-based color
+  const stateColor =
+    adminState === "down"        ? "#f7556c"
+    : adminState === "maintenance" ? "#ffb857"
+    : "#31c4ff";
 
-  const stroke = emphasized ? stateStroke : idleStroke;
-  const strokeWidth = emphasized ? 2.6 : 1.9;
-  const strokeDasharray = adminState === "down" ? "5 5" : emphasized ? "0" : "7 3";
-  const pathClassName =
-    adminState === "down"
-      ? emphasized
-        ? "topology-edge-path topology-edge-path--down-active"
-        : "topology-edge-path topology-edge-path--down topology-edge-path--animated"
-      : adminState === "maintenance"
-        ? emphasized
-          ? "topology-edge-path topology-edge-path--maintenance-active"
-          : "topology-edge-path topology-edge-path--maintenance topology-edge-path--animated"
-        : emphasized
-          ? "topology-edge-path topology-edge-path--up-active"
-          : "topology-edge-path topology-edge-path--up topology-edge-path--animated";
+  const stroke      = emphasized ? `${stateColor}ee` : `${stateColor}70`;
+  const strokeWidth = emphasized ? 2.2 : 1.5;
+  const strokeDash  = adminState === "down" ? "6 4" : undefined;
 
+  // ── Port tag anchor positions ────────────────────────────────────────────────
+  // Place labels 32px from each endpoint along the cable direction,
+  // with a small perpendicular offset (10px) so they don't sit on the line.
   const dx = targetX - sourceX;
   const dy = targetY - sourceY;
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
-  const px = (-dy / len) * 14;
-  const py = (dx / len) * 14;
+  const ux = dx / len;
+  const uy = dy / len;
+  const perp = 10; // perpendicular offset away from cable
+  const px = -uy * perp;
+  const py =  ux * perp;
+  const DIST = 32;
 
-  const slx = sourceX + dx * 0.22;
-  const sly = sourceY + dy * 0.22;
-  const tlx = sourceX + dx * 0.78;
-  const tly = sourceY + dy * 0.78;
+  const srcTagX = sourceX + ux * DIST + px;
+  const srcTagY = sourceY + uy * DIST + py;
+  const tgtTagX = targetX - ux * DIST + px;
+  const tgtTagY = targetY - uy * DIST + py;
 
-  const frame = (centerX: number, centerY: number, width: number, height: number) => ({
-    x: centerX - width / 2,
-    y: centerY - height / 2,
-    width,
-    height,
-  });
-
-  const discoveryFrame = frame(labelX, labelY + 16, DISCOVERY_LABEL_WIDTH, DISCOVERY_LABEL_HEIGHT);
-  const selectedFrame = frame(labelX, labelY, SELECTED_LABEL_WIDTH, SELECTED_LABEL_HEIGHT);
-  const recentFrame = frame(labelX, labelY, RECENT_LABEL_WIDTH, RECENT_LABEL_HEIGHT);
-  const sourceFrame = frame(slx + px, sly + py, PORT_LABEL_WIDTH, PORT_LABEL_HEIGHT);
-  const targetFrame = frame(tlx + px, tly + py, PORT_LABEL_WIDTH, PORT_LABEL_HEIGHT);
-
-  const triggerEdit = (event: MouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const triggerEdit = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (edgeData.isDiscovery) return;
     window.dispatchEvent(new CustomEvent(EDGE_EDIT_EVENT, { detail: { id } }));
   };
 
   return (
     <>
+      {/* Glow halo when selected */}
+      {emphasized && (
+        <path
+          d={edgePath}
+          stroke={stateColor}
+          strokeWidth={strokeWidth + 7}
+          strokeOpacity={0.10}
+          fill="none"
+          strokeLinecap="round"
+          pointerEvents="none"
+        />
+      )}
+
       <BaseEdge
         id={id}
         path={edgePath}
-        className={pathClassName}
         stroke={stroke}
         strokeWidth={strokeWidth}
-        strokeDasharray={strokeDasharray}
+        strokeDasharray={strokeDash}
         strokeLinecap="round"
         strokeLinejoin="round"
+        className={
+          !emphasized && adminState !== "down"
+            ? "topology-edge-path topology-edge-path--up topology-edge-path--animated"
+            : "topology-edge-path"
+        }
+        style={{ cursor: edgeData.isDiscovery ? "default" : "pointer" }}
       />
 
-      <circle r={3.7} fill="rgba(49,196,255,0.95)" stroke="none">
-        <animateMotion dur="1.55s" repeatCount="indefinite" path={edgePath} />
+      {/* Data-flow particles */}
+      <circle r={3.2} fill={stateColor} opacity={emphasized ? 0.95 : 0.65} stroke="none">
+        <animateMotion dur="1.6s" repeatCount="indefinite" path={edgePath} />
+      </circle>
+      <circle r={2} fill="rgba(133,148,255,0.90)" opacity={emphasized ? 0.90 : 0.55} stroke="none">
+        <animateMotion dur="2.4s" begin="0.45s" repeatCount="indefinite" path={edgePath} />
       </circle>
 
-      <circle r={2.4} fill="rgba(133,148,255,0.95)" stroke="none">
-        <animateMotion dur="2.1s" begin="0.3s" repeatCount="indefinite" path={edgePath} />
-      </circle>
+      {/* Port labels near endpoints */}
+      <PortTag x={srcTagX} y={srcTagY} label={srcPort} accent={stateColor} />
+      <PortTag x={tgtTagX} y={tgtTagY} label={tgtPort} accent={stateColor} />
 
-      <foreignObject {...discoveryFrame} pointerEvents={edgeData.isDiscovery ? "none" : "all"}>
-        {edgeData.isDiscovery ? (
-          <div
-            className="edge-label edge-label--discovery w-full h-full"
-            title="Discovered neighbor link"
+      {/* Discovery protocol indicator */}
+      {edgeData.isDiscovery && (
+        <g pointerEvents="none">
+          <rect
+            x={labelX - 28} y={labelY - 8}
+            width={56} height={14} rx={3}
+            fill="rgba(3,6,14,0.86)"
+            stroke="rgba(255,184,87,0.38)" strokeWidth={0.7}
+          />
+          <text
+            x={labelX} y={labelY + 4.5}
+            textAnchor="middle"
+            fontFamily="monospace" fontSize={8} letterSpacing={0.5}
+            fill="rgba(255,184,87,0.85)"
           >
-            {discoveryLabel}
-            {edgeData.discoveryNote && <span className="ml-1 text-ink-muted">· {edgeData.discoveryNote}</span>}
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={triggerEdit}
-            className="edge-label edge-label--interactive edge-label--state w-full h-full micro-tap"
-            title="Edit this link"
-          >
-            {Math.round(bandwidthMbps ?? 1000)}M · {Math.round(latencyMs ?? 5)}ms · {adminState}
-          </button>
-        )}
-      </foreignObject>
+            {(edgeData.discoveryProtocols?.length ?? 0) > 0
+              ? edgeData.discoveryProtocols!.map((p) => p.toUpperCase()).join("·")
+              : "DISC"}
+          </text>
+        </g>
+      )}
 
+      {/* "edit link" action when selected and not discovery */}
       {selected && !edgeData.isDiscovery && (
-        <foreignObject {...selectedFrame} pointerEvents="all">
+        <foreignObject
+          x={labelX - 34} y={labelY - 10}
+          width={68} height={20}
+          style={{ pointerEvents: "all" }}
+        >
           <button
             type="button"
             onClick={triggerEdit}
@@ -162,37 +188,6 @@ export const TopologyEdge = memo(function TopologyEdge({
           </button>
         </foreignObject>
       )}
-
-      {edgeData.recent && !selected && !edgeData.isDiscovery && (
-        <foreignObject {...recentFrame} pointerEvents="none">
-          <div className="edge-label edge-label--recent w-full h-full">
-            linked
-          </div>
-        </foreignObject>
-      )}
-
-      <foreignObject {...sourceFrame} pointerEvents="all">
-        <button
-          type="button"
-          onClick={triggerEdit}
-          className="edge-label edge-label--interactive edge-label--port w-full h-full micro-tap"
-          title={sourcePortTitle}
-        >
-          {sourcePortLabel} -&gt;
-        </button>
-      </foreignObject>
-
-      <foreignObject {...targetFrame} pointerEvents="all">
-        <button
-          type="button"
-          onClick={triggerEdit}
-          className="edge-label edge-label--interactive edge-label--port w-full h-full micro-tap"
-          title={targetPortTitle}
-        >
-          &lt;- {targetPortLabel}
-        </button>
-      </foreignObject>
-
     </>
   );
 });

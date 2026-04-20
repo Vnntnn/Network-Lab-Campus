@@ -361,7 +361,19 @@ export function TopologyView() {
           type?: string;
           seed_pod_id?: number;
           snapshot?: TopologyDiscoveryResponse;
+          updated_count?: number;
         };
+
+        if (message.type === "hostname.sync") {
+          void queryClient.invalidateQueries({ queryKey: ["pods"] });
+          if (discoverySeedId !== null) {
+            void refetchDiscovery();
+          }
+          if ((message.updated_count ?? 0) > 0) {
+            pushLinkNotice("ok", `Hostname sync updated ${message.updated_count} node(s).`);
+          }
+          return;
+        }
 
         if (message.type !== "topology.discovery") return;
         if (message.seed_pod_id !== discoverySeedId) return;
@@ -377,7 +389,7 @@ export function TopologyView() {
     return () => {
       socket.close();
     };
-  }, [discoveryMode, discoverySeedId, pushLinkNotice, queryClient]);
+  }, [discoveryMode, discoverySeedId, pushLinkNotice, queryClient, refetchDiscovery]);
 
   useEffect(() => {
     if (!activeEdge) return;

@@ -1,17 +1,68 @@
 from contextlib import asynccontextmanager
+from contextlib import suppress
+import asyncio
+import logging
 import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from database import init_db
+from database import AsyncSessionLocal, init_db
 from routers import pods, commands, instructor, snapshots, orchestration, topology
+from services.topology_discovery import sync_known_pod_hostnames
+
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_hostname_monitor_interval() -> int:
+    raw = os.getenv("HOSTNAME_MONITOR_INTERVAL_SEC", "15").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return 15
+    return max(0, value)
+
+
+async def _hostname_monitor_loop(interval_sec: int) -> None:
+    while True:
+        updated_ids: list[int] = []
+        try:
+            async with AsyncSessionLocal() as db:
+                updated_ids = await sync_known_pod_hostnames(db)
+        except Exception:
+            logger.exception("Hostname monitor iteration failed")
+
+        if updated_ids:
+            try:
+                await topology.broadcast(
+                    {
+                        "type": "hostname.sync",
+                        "updated_count": len(updated_ids),
+                    }
+                )
+            except Exception:
+                logger.exception("Hostname sync broadcast failed")
+
+        await asyncio.sleep(interval_sec)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    hostname_monitor_task: asyncio.Task | None = None
     await init_db()
-    yield
+
+    monitor_interval = _resolve_hostname_monitor_interval()
+    if monitor_interval > 0:
+        hostname_monitor_task = asyncio.create_task(_hostname_monitor_loop(monitor_interval))
+
+    try:
+        yield
+    finally:
+        if hostname_monitor_task is not None:
+            hostname_monitor_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await hostname_monitor_task
 
 
 app = FastAPI(

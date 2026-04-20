@@ -87,6 +87,8 @@ export const usePods = () =>
   useQuery<LabPod[]>({
     queryKey: ["pods"],
     queryFn: async () => (await api.get<LabPod[]>("/pods/")).data,
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: true,
   });
 
 export const useBackendHealth = () =>
