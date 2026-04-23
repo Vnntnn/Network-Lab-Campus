@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Database, Waypoints } from "lucide-react";
+import { AlertCircle, Database, Layers, ShieldCheck, Waypoints } from "lucide-react";
 import { motion } from "framer-motion";
 import { useQueries } from "@tanstack/react-query";
 import { usePods } from "@/api/queries";
@@ -118,6 +118,22 @@ export function PodSelector() {
           >
             <Waypoints className="h-3 w-3" />
             Topology
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("orchestrator")}
+            className={cn(NAV_BUTTON, "border-amber-400/30 text-amber-300 bg-amber-400/10")}
+          >
+            <Layers className="h-3 w-3" />
+            Orchestrator
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("instructor")}
+            className={cn(NAV_BUTTON, "border-violet-400/30 text-violet-300 bg-violet-400/10")}
+          >
+            <ShieldCheck className="h-3 w-3" />
+            Instructor
           </button>
           <button
             type="button"
