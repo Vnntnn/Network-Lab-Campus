@@ -6,6 +6,7 @@ import { usePods } from "@/api/queries";
 import { useAppStore } from "@/stores/appStore";
 import { PodRow } from "./PodRow";
 import { AddPodForm } from "./AddPodForm";
+import { IdentityPanel } from "./IdentityPanel";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { ViewLoading } from "@/components/ui/ViewLoading";
 
@@ -58,6 +59,8 @@ export function AdminPanel() {
           {showAddForm && (
             <AddPodForm onSuccess={() => setShowAddForm(false)} />
           )}
+
+          <IdentityPanel />
 
           {/* Pod list */}
           <div>

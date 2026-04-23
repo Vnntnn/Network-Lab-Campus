@@ -10,11 +10,55 @@ export const podSchema = z.object({
     "Valid IPv4 required"
   ),
   device_type:  z.enum(["arista_eos", "cisco_iosxe", "cisco_iosxr"]),
-  ssh_username: z.string().min(1, "Username required").max(64),
-  ssh_password: z.string().min(1, "Password required").max(128),
+  ssh_username: z.string().max(64).optional().or(z.literal("")),
+  ssh_password: z.string().max(128).optional().or(z.literal("")),
+  connection_protocol: z.enum(["ssh", "telnet"]).default("telnet"),
+  telnet_port:  z.coerce.number().int().min(1).max(65535).optional().or(z.literal("")),
   description:  z.string().max(256).default(""),
-});
+}).refine(
+  (data) => {
+    // SSH requires username and password
+    if (data.connection_protocol === "ssh") {
+      return (data.ssh_username && data.ssh_username.trim().length > 0) &&
+             (data.ssh_password && data.ssh_password.trim().length > 0);
+    }
+    // Telnet: optional credentials
+    return true;
+  },
+  {
+    message: "Username and password are required for SSH",
+    path: ["ssh_username"],
+  }
+);
 export type PodFormData = z.infer<typeof podSchema>;
+
+// ── Device Discovery ──────────────────────────────────────────────────────
+
+export const deviceDiscoverySchema = z.object({
+  device_ip:    z.string().regex(
+    /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/,
+    "Valid IPv4 required"
+  ),
+  ssh_username: z.string().max(64).optional().or(z.literal("")),
+  ssh_password: z.string().max(128).optional().or(z.literal("")),
+  connection_protocol: z.enum(["ssh", "telnet"]).default("telnet"),
+  port:         z.number().int().min(1).max(65535).optional(),
+}).refine(
+  (data) => {
+    // SSH requires username and password
+    if (data.connection_protocol === "ssh") {
+      return (data.ssh_username && data.ssh_username.trim().length > 0) &&
+             (data.ssh_password && data.ssh_password.trim().length > 0);
+    }
+    // Telnet: optional credentials
+    return true;
+  },
+  {
+    message: "Username and password are required for SSH",
+    path: ["ssh_username"],
+  }
+);
+export type DeviceDiscoveryFormData = z.infer<typeof deviceDiscoverySchema>;
 
 const ipv4 = z
   .string()

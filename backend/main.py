@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import AsyncSessionLocal, init_db
-from routers import pods, commands, instructor, snapshots, orchestration, topology
+from routers import pods, commands, identities, instructor, snapshots, orchestration, topology
 from services.topology_discovery import sync_known_pod_hostnames
 
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_hostname_monitor_interval() -> int:
-    raw = os.getenv("HOSTNAME_MONITOR_INTERVAL_SEC", "15").strip()
+    raw = os.getenv("HOSTNAME_MONITOR_INTERVAL_SEC", "2").strip()
     try:
         value = int(raw)
     except ValueError:
@@ -91,6 +91,7 @@ app.add_middleware(
 
 app.include_router(pods.router, prefix="/api/v1")
 app.include_router(commands.router, prefix="/api/v1")
+app.include_router(identities.router, prefix="/api/v1")
 app.include_router(instructor.router)
 app.include_router(snapshots.router, prefix="/api/v1")
 app.include_router(orchestration.router, prefix="/api/v1")

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Trash2, Wifi, Loader2, CheckCircle2, XCircle, Pencil, ChevronDown } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useDeletePod, usePingPod, useUpdatePod, type LabPod } from "@/api/queries";
+import { useDeletePod, useIdentities, usePingPod, useUpdatePod, type LabPod } from "@/api/queries";
 import { podSchema, type PodFormData } from "@/schemas/network";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/components/ui/cn";
@@ -31,6 +31,8 @@ interface PodRowProps {
 export function PodRow({ pod, index }: PodRowProps) {
   const [editing,    setEditing]    = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [identitySelection, setIdentitySelection] = useState<string>(pod.identity_id ? String(pod.identity_id) : "");
+  const { data: identities } = useIdentities();
 
   const { mutate: ping,   isPending: pinging,  data: pingResult,  reset: resetPing  } = usePingPod();
   const { mutate: del,    isPending: deleting                                         } = useDeletePod();
@@ -43,14 +45,25 @@ export function PodRow({ pod, index }: PodRowProps) {
       pod_name:     pod.pod_name,
       device_ip:    pod.device_ip,
       device_type:  pod.device_type,
-      ssh_username: pod.ssh_username,
-      ssh_password: pod.ssh_password,
+      ssh_username: pod.ssh_username ?? "",
+      ssh_password: pod.ssh_password ?? "",
+      connection_protocol: pod.connection_protocol ?? "telnet",
+      telnet_port: pod.telnet_port ?? "",
       description:  pod.description,
     },
   });
 
   const onSave = (data: PodFormData) => {
-    update({ id: pod.id, ...data }, { onSuccess: () => setEditing(false) });
+    const identityId = Number(identitySelection);
+    update(
+      {
+        id: pod.id,
+        ...data,
+        telnet_port: typeof data.telnet_port === "number" ? data.telnet_port : undefined,
+        identity_id: Number.isFinite(identityId) && identityId > 0 ? identityId : null,
+      },
+      { onSuccess: () => setEditing(false) }
+    );
   };
 
   return (
@@ -78,6 +91,11 @@ export function PodRow({ pod, index }: PodRowProps) {
         <Badge variant="cyan" className="hidden sm:inline-flex flex-shrink-0">
           {DEVICE_LABELS[pod.device_type] ?? pod.device_type}
         </Badge>
+        {pod.identity_name && (
+          <Badge variant="default" className="hidden lg:inline-flex flex-shrink-0 border-cyan-300/25 text-cyan-200">
+            {pod.identity_name}
+          </Badge>
+        )}
 
         {/* Ping status */}
         <div className="flex items-center gap-1.5 w-36 flex-shrink-0">
@@ -179,6 +197,39 @@ export function PodRow({ pod, index }: PodRowProps) {
               </div>
             </Field>
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Connection Protocol" error={errors.connection_protocol?.message}>
+              <div className="relative">
+                <select {...register("connection_protocol")} className="input-field text-xs appearance-none pr-8">
+                  <option value="telnet">Telnet</option>
+                  <option value="ssh">SSH</option>
+                </select>
+                <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-muted pointer-events-none" />
+              </div>
+            </Field>
+            <Field label="Telnet Port" error={errors.telnet_port?.message}>
+              <input {...register("telnet_port")} className="input-field text-xs" type="number" placeholder="23" />
+            </Field>
+          </div>
+          <Field label="Credential Identity">
+            <div className="relative">
+              <select
+                value={identitySelection}
+                onChange={(event) => setIdentitySelection(event.target.value)}
+                className="input-field text-xs appearance-none pr-8"
+                title="Credential identity"
+                aria-label="Credential identity"
+              >
+                <option value="">Use inline/default credentials</option>
+                {(identities ?? []).map((identity) => (
+                  <option key={identity.id} value={String(identity.id)}>
+                    {identity.name}{identity.is_default ? " (default)" : ""}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-muted pointer-events-none" />
+            </div>
+          </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="SSH Username" error={errors.ssh_username?.message}>
               <input {...register("ssh_username")} className="input-field text-xs" />

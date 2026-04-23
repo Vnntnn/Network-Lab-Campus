@@ -1,7 +1,20 @@
+import type { Edge } from "@xyflow/react";
+import type { TopologyEdgeData } from "@/types/topology";
+
 const INTERFACE_COLLATOR = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: "base",
 });
+
+export interface ConnectionLedgerRow {
+  id: string;
+  peerName: string;
+  localPort: string;
+  remotePort: string;
+  protocol: string;
+  state: "up" | "maintenance" | "down" | "discovery";
+  isDiscovery: boolean;
+}
 
 export function normalizeInterfaces(interfaces?: string[] | null): string[] {
   return Array.from(
@@ -52,4 +65,41 @@ export function formatInterfaceSummary(interfaces?: string[] | null, fallback = 
   if (normalized.length === 1) return normalized[0];
 
   return `${normalized[0]} +${normalized.length - 1}`;
+}
+
+export function buildConnectionLedger(
+  nodeId: string,
+  nodeNames: Map<string, string>,
+  edges: Array<Edge<TopologyEdgeData>>,
+) {
+  return edges
+    .filter((edge) => edge.source === nodeId || edge.target === nodeId)
+    .map((edge) => {
+      const edgeData = (edge.data ?? {}) as TopologyEdgeData;
+      const sourceIsActive = edge.source === nodeId;
+      const peerId = sourceIsActive ? edge.target : edge.source;
+      const peerName = nodeNames.get(peerId) ?? peerId;
+      const localPort = sourceIsActive
+        ? edgeData.sourceLabel ?? edgeData.sourceInterfaces?.[0] ?? "Eth?"
+        : edgeData.targetLabel ?? edgeData.targetInterfaces?.[0] ?? "Eth?";
+      const remotePort = sourceIsActive
+        ? edgeData.targetLabel ?? edgeData.targetInterfaces?.[0] ?? "Eth?"
+        : edgeData.sourceLabel ?? edgeData.sourceInterfaces?.[0] ?? "Eth?";
+      const protocol = edgeData.discoveryProtocols?.length
+        ? edgeData.discoveryProtocols.map((value) => value.toUpperCase()).join("/")
+        : edgeData.isDiscovery
+          ? "DISCOVERY"
+          : "MANUAL";
+
+      return {
+        id: edge.id,
+        peerName,
+        localPort,
+        remotePort,
+        protocol,
+        state: (edgeData.adminState ?? (edgeData.isDiscovery ? "discovery" : "up")) as ConnectionLedgerRow["state"],
+        isDiscovery: Boolean(edgeData.isDiscovery),
+      } satisfies ConnectionLedgerRow;
+    })
+    .sort((left, right) => left.peerName.localeCompare(right.peerName));
 }
