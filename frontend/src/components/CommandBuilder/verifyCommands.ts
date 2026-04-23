@@ -1,7 +1,7 @@
 export type Feature =
   | "interface" | "ospf" | "vlan" | "bgp" | "static" | "system"
   | "eigrp" | "dhcp" | "acl" | "nat" | "portchannel" | "stp"
-  | "vrf" | "prefixlist" | "routemap" | "pbr" | "qos" | "snmp" | "syslog" | "aaa";
+  | "vrf" | "prefixlist" | "routemap" | "pbr" | "qos" | "snmp" | "syslog" | "aaa" | "ssh";
 
 interface ShowCommand {
   label: string;
@@ -118,5 +118,11 @@ export const SHOW_COMMANDS: Record<Feature, ShowCommand[]> = {
     { label: "NTP Status",     cmd: "show ntp status" },
     { label: "Hosts",          cmd: "show hosts" },
     { label: "Running Config", cmd: "show running-config" },
+  ],
+  ssh: [
+    { label: "SSH Status",    cmd: "show ip ssh" },
+    { label: "SSH Sessions",  cmd: "show ssh" },
+    { label: "VTY Lines",     cmd: "show line vty 0 4" },
+    { label: "RSA Keys",      cmd: "show crypto key mypubkey rsa" },
   ],
 };

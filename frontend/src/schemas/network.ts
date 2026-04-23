@@ -76,9 +76,20 @@ const asn = z.coerce
 // ── Interface ─────────────────────────────────────────────────────────────
 
 export const interfaceSchema = z.object({
-  interface_name: z.string().min(1, "Interface name is required"),
-  ip_address: ipv4,
-  prefix_length: z.coerce.number().int().min(1, "Min /1").max(32, "Max /32"),
+  mode: z.enum(["routed", "access", "trunk", "svi", "subinterface"]).default("routed"),
+  interface_name: z.string().min(1, "Interface name / VLAN ID required"),
+  description: z.string().max(80).optional(),
+  // L3 (routed / svi / subinterface)
+  ip_address: ipv4.optional().or(z.literal("")),
+  prefix_length: z.coerce.number().int().min(1).max(32).optional(),
+  // Access port
+  access_vlan: z.coerce.number().int().min(1).max(4094).optional(),
+  // Trunk port
+  trunk_allowed_vlans: z.string().max(128).optional(),
+  native_vlan: z.coerce.number().int().min(1).max(4094).optional(),
+  // Sub-interface dot1q encapsulation
+  encap_vlan: z.coerce.number().int().min(1).max(4094).optional(),
+  // Admin state
   shutdown: z.boolean().default(false),
 });
 export type InterfaceFormData = z.infer<typeof interfaceSchema>;
@@ -95,6 +106,8 @@ export const ospfSchema = z.object({
   process_id: z.coerce.number().int().min(1).max(65535),
   router_id: ipv4.optional().or(z.literal("")),
   networks: z.array(ospfNetworkSchema).min(1, "Add at least one network"),
+  passive_default: z.boolean().default(false),
+  redistribute_connected: z.boolean().default(false),
 });
 export type OspfFormData = z.infer<typeof ospfSchema>;
 
@@ -223,6 +236,7 @@ export const natSchema = z.object({
   pool_name: z.string().optional(),
   pool_start: ipv4.optional().or(z.literal("")),
   pool_end: ipv4.optional().or(z.literal("")),
+  pool_prefix: z.coerce.number().int().min(1).max(32).optional(),
 });
 export type NatFormData = z.infer<typeof natSchema>;
 
@@ -370,3 +384,13 @@ export const aaaSchema = z.object({
   users: z.array(aaaUserSchema).min(1, "Add at least one local user"),
 });
 export type AaaFormData = z.infer<typeof aaaSchema>;
+
+// ── SSH / VTY ─────────────────────────────────────────────────────────────
+
+export const sshSchema = z.object({
+  modulus_bits: z.enum(["1024", "2048", "4096"]).default("2048"),
+  vty_lines: z.string().default("0 4"),
+  auth_method: z.enum(["local", "none"]).default("local"),
+  exec_timeout: z.coerce.number().int().min(0).max(35791).default(5),
+});
+export type SshFormData = z.infer<typeof sshSchema>;
