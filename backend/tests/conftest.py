@@ -10,7 +10,7 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB_FILE.resolve().as_po
 
 from database import AsyncSessionLocal, engine, init_db  # noqa: E402
 from main import app  # noqa: E402
-from models import DeviceCommandHistory, LabPod, Snapshot  # noqa: E402
+from models import CredentialIdentity, DeviceCommandHistory, LabPod, PodDisabledInterface, Snapshot, TopologyDiscoveryJob  # noqa: E402
 
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
@@ -29,6 +29,9 @@ async def init_test_database():
 @pytest_asyncio.fixture(autouse=True)
 async def clean_database_tables():
     async with AsyncSessionLocal() as db:
+        await db.execute(delete(TopologyDiscoveryJob))
+        await db.execute(delete(PodDisabledInterface))
+        await db.execute(delete(CredentialIdentity))
         await db.execute(delete(DeviceCommandHistory))
         await db.execute(delete(Snapshot))
         await db.execute(delete(LabPod))

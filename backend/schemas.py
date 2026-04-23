@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Literal
 import re
 
@@ -16,8 +16,12 @@ class LabPodBase(BaseModel):
     pod_name: str = Field(..., min_length=1, max_length=64)
     device_ip: str = Field(..., description="IPv4 address of the real device")
     device_type: DeviceType = "arista_eos"
-    ssh_username: str = Field(..., min_length=1, max_length=64)
-    ssh_password: str = Field(..., min_length=1, max_length=128)
+    ssh_username: str | None = Field(default=None, max_length=64)
+    ssh_password: str | None = Field(default=None, max_length=128)
+    connection_protocol: Literal["ssh", "telnet"] = "telnet"
+    telnet_port: int | None = Field(default=None, ge=1, le=65535, description="Custom Telnet port (optional, default: 23)")
+    identity_id: int | None = Field(default=None, ge=1)
+    display_name: str | None = Field(default=None, max_length=64)
     description: str = Field(default="", max_length=256)
 
     @field_validator("device_ip")
@@ -27,6 +31,18 @@ class LabPodBase(BaseModel):
         if not re.match(pattern, v):
             raise ValueError(f"'{v}' is not a valid IPv4 address")
         return v
+
+    @model_validator(mode="after")
+    def validate_ssh_credentials(self):
+        """If inline SSH creds are used, require both username and password."""
+        if self.connection_protocol == "ssh":
+            if self.identity_id:
+                return self
+            has_username = bool(self.ssh_username and self.ssh_username.strip())
+            has_password = bool(self.ssh_password and self.ssh_password.strip())
+            if has_username ^ has_password:
+                raise ValueError("Username and password must be provided together for inline SSH credentials")
+        return self
 
 
 class LabPodCreate(LabPodBase):
@@ -39,6 +55,10 @@ class LabPodUpdate(BaseModel):
     device_type: DeviceType | None = None
     ssh_username: str | None = Field(default=None, max_length=64)
     ssh_password: str | None = Field(default=None, max_length=128)
+    connection_protocol: Literal["ssh", "telnet"] | None = None
+    telnet_port: int | None = Field(default=None, ge=1, le=65535)
+    identity_id: int | None = Field(default=None, ge=1)
+    display_name: str | None = Field(default=None, max_length=64)
     description: str | None = Field(default=None, max_length=256)
 
     @field_validator("device_ip")
@@ -52,10 +72,95 @@ class LabPodUpdate(BaseModel):
         return v
 
 
+
 class LabPodRead(LabPodBase):
     id: int
+    detected_device_type: str | None = None
+    auto_detected: bool = False
+    identity_name: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class DeviceDiscoveryRequest(BaseModel):
+    device_ip: str = Field(..., description="IPv4 address of the device")
+    ssh_username: str | None = Field(default=None, max_length=64)
+    ssh_password: str | None = Field(default=None, max_length=128)
+    connection_protocol: Literal["ssh", "telnet"] = "telnet"
+    port: int | None = None
+
+    @field_validator("device_ip")
+    @classmethod
+    def validate_ipv4(cls, v: str) -> str:
+        pattern = r"^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$"
+        if not re.match(pattern, v):
+            raise ValueError(f"'{v}' is not a valid IPv4 address")
+        return v
+
+    @model_validator(mode="after")
+    def validate_ssh_credentials(self):
+        """Require username and password for SSH connections."""
+        if self.connection_protocol == "ssh":
+            if not self.ssh_username or not self.ssh_username.strip():
+                raise ValueError("Username is required for SSH connections")
+            if not self.ssh_password or not self.ssh_password.strip():
+                raise ValueError("Password is required for SSH connections")
+        return self
+
+
+class DeviceDiscoveryResponse(BaseModel):
+    success: bool
+    device_type: str | None = None
+    hostname: str | None = None
+    model: str | None = None
+    serial_number: str | None = None
+    message: str = ""
+    elapsed_ms: float
+
+
+class IdentityBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64)
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1, max_length=128)
+    is_default: bool = False
+
+
+class IdentityCreate(IdentityBase):
+    pass
+
+
+class IdentityUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    username: str | None = Field(default=None, min_length=1, max_length=64)
+    password: str | None = Field(default=None, min_length=1, max_length=128)
+    is_default: bool | None = None
+
+
+class IdentityRead(IdentityBase):
+    id: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PodInterfaceRead(BaseModel):
+    interface_name: str
+    connected: bool = False
+    disabled: bool = False
+    can_disable: bool = True
+    peer_count: int = 0
+
+
+class PodInterfaceSetRequest(BaseModel):
+    interface_name: str = Field(..., min_length=1, max_length=64)
+    disabled: bool
+
+
+class PodInterfacesResponse(BaseModel):
+    pod_id: int
+    pod_name: str
+    discovered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    interfaces: list[PodInterfaceRead] = Field(default_factory=list)
 
 
 class PingResponse(BaseModel):
@@ -260,4 +365,66 @@ class TopologyDiscoveryResponse(BaseModel):
     commands: list[str] = Field(default_factory=list)
     nodes: list[TopologyNodeRead] = Field(default_factory=list)
     edges: list[TopologyEdgeRead] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class TopologyDiscoverAllItem(BaseModel):
+    pod_id: int
+    pod_name: str
+    success: bool
+    discovered_at: datetime | None = None
+    node_count: int = 0
+    edge_count: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class TopologyDiscoverAllResponse(BaseModel):
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    total: int = 0
+    successful: int = 0
+    failed: int = 0
+    items: list[TopologyDiscoverAllItem] = Field(default_factory=list)
+
+
+class TopologyDiscoverAllJobCreateResponse(BaseModel):
+    job_id: int
+    status: Literal["pending", "running", "completed", "failed"]
+
+
+class TopologyDiscoverAllJobRead(BaseModel):
+    id: int
+    owner_id: str
+    status: Literal["pending", "running", "completed", "failed"]
+    max_hops: int
+    total: int
+    successful: int
+    failed: int
+    items: list[TopologyDiscoverAllItem] = Field(default_factory=list)
+    error_message: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    updated_at: datetime
+
+
+class RouteEntryRead(BaseModel):
+    code: str
+    protocol: str
+    prefix: str
+    next_hop: str | None = None
+    interface: str | None = None
+    raw: str
+
+
+class RouteAnalyticsResponse(BaseModel):
+    pod_id: int
+    pod_name: str
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    source_command: str
+    total_routes: int = 0
+    default_route_present: bool = False
+    protocol_counts: dict[str, int] = Field(default_factory=dict)
+    routes: list[RouteEntryRead] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

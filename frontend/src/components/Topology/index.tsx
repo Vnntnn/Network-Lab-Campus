@@ -19,7 +19,15 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft, Network, Settings, AlertCircle, RefreshCw, Check, Link2, PencilLine, RotateCcw, Unplug,
 } from "lucide-react";
-import { usePods, useTopologyDiscovery, type LabPod } from "@/api/queries";
+import {
+  useDiscoverAllTopology,
+  usePodInterfaces,
+  usePods,
+  useSetPodInterfaceState,
+  useTopologyDiscovery,
+  type DiscoverAllResponse,
+  type LabPod,
+} from "@/api/queries";
 import { buildWsUrl } from "@/api/ws";
 import { useAppStore } from "@/stores/appStore";
 import { usePodStore } from "@/stores/podStore";
@@ -29,7 +37,7 @@ import { cn } from "@/components/ui/cn";
 import { GuiPane } from "@/components/CommandBuilder/GuiPane";
 import { DeviceNode, TOPOLOGY_QUICK_CONFIG_EVENT } from "./DeviceNode";
 import { TopologyEdge } from "./TopologyEdge";
-import { groupInterfaces, summarizeInterfaces } from "./portUtils";
+import { buildConnectionLedger, groupInterfaces, summarizeInterfaces } from "./portUtils";
 import type { TopologyDiscoveryResponse } from "@/types/topology";
 import type { TopologyEdgeData } from "@/types/topology";
 
@@ -135,6 +143,57 @@ function InterfaceBank({ title, interfaces, tone = "cyan", compact = false }: In
   );
 }
 
+function ConnectionLedger({
+  title,
+  rows,
+  compact = false,
+}: {
+  title: string;
+  rows: ReturnType<typeof buildConnectionLedger>;
+  compact?: boolean;
+}) {
+  return (
+    <div className={cn("rounded-xl border border-edge-subtle bg-void/60 p-3", compact ? "p-2.5" : "") }>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-2xs font-mono uppercase tracking-[0.16em] text-ink-muted">{title}</p>
+        <span className="telemetry-chip px-2 py-0.5 text-2xs">{rows.length}</span>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="mt-2 text-xs text-ink-muted">No discovered links yet.</p>
+      ) : (
+        <div className={cn("mt-2 space-y-2 pr-1", compact ? "max-h-28" : "max-h-44", "overflow-y-auto") }>
+          {rows.map((row) => (
+            <div key={row.id} className="rounded-lg border border-edge-subtle bg-void/72 px-2.5 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-ink-bright truncate">{row.peerName}</p>
+                <span
+                  className={cn(
+                    "telemetry-chip px-2 py-0.5 text-2xs uppercase",
+                    row.state === "down"
+                      ? "border-crimson/35 text-crimson"
+                      : row.state === "maintenance"
+                        ? "border-amber-300/35 text-amber-200"
+                        : row.isDiscovery
+                          ? "border-cyan-300/35 text-cyan-200"
+                          : "border-matrix/35 text-matrix"
+                  )}
+                >
+                  {row.state}
+                </span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-2 text-2xs font-mono">
+                <span className="text-ink-secondary truncate">{row.localPort} ↔ {row.remotePort}</span>
+                <span className="text-cyan-200">{row.protocol}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function enrichTopologyNodes(nodes: Node<DeviceNodeData>[], edges: Edge[]) {
   const nodeNames = new Map(nodes.map((node) => [node.id, node.data.pod.pod_name]));
   const linkStats = new Map<string, { count: number; peers: Set<string> }>();
@@ -208,6 +267,7 @@ export function TopologyView() {
   const [activeEdgeId, setActiveEdgeId] = useState<string | null>(null);
   const [quickConfigPod, setQuickConfigPod] = useState<LabPod | null>(null);
   const [quickConfigCommands, setQuickConfigCommands] = useState<string[]>([]);
+  const [lastDiscoverAll, setLastDiscoverAll] = useState<DiscoverAllResponse | null>(null);
   const [discoveryMode] = useState(true);
   const [discoverySeedId, setDiscoverySeedId] = useState<number | null>(null);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
@@ -226,6 +286,8 @@ export function TopologyView() {
   );
 
   const discoveryQuery = useTopologyDiscovery(discoverySeedId, discoveryMode);
+  const discoverAllMutation = useDiscoverAllTopology();
+  const setInterfaceStateMutation = useSetPodInterfaceState();
 
   const discoveryNodes = useMemo(
     () => discoveryQuery.data ? enrichTopologyNodes(discoveryQuery.data.nodes as Node<DeviceNodeData>[], discoveryQuery.data.edges as Edge[]) : [],
@@ -260,6 +322,19 @@ export function TopologyView() {
     [activeNodeId, canvasNodes]
   );
 
+  const activeGovernancePodId = useMemo(
+    () => (activeNode && activeNode.data.pod.id > 0 ? activeNode.data.pod.id : null),
+    [activeNode]
+  );
+
+  const activeInterfacesQuery = usePodInterfaces(
+    activeGovernancePodId,
+    discoveryMode && activeGovernancePodId !== null
+  );
+
+  const interfaceRows = activeInterfacesQuery.data?.interfaces ?? [];
+  const disabledInterfaceCount = interfaceRows.filter((entry) => entry.disabled).length;
+
   const liveLinkRows = useMemo(
     () =>
       canvasEdges.slice(0, 24).map((edge) => {
@@ -285,6 +360,16 @@ export function TopologyView() {
         };
       }),
     [canvasEdges, nodeNames]
+  );
+
+  const activeNodeLedger = useMemo(
+    () => (activeNode ? buildConnectionLedger(activeNode.id, nodeNames, canvasEdges as Array<Edge<TopologyEdgeData>>) : []),
+    [activeNode, canvasEdges, nodeNames]
+  );
+
+  const activeQuickLedger = useMemo(
+    () => (activeQuickNode ? buildConnectionLedger(activeQuickNode.id, nodeNames, canvasEdges as Array<Edge<TopologyEdgeData>>) : []),
+    [activeQuickNode, canvasEdges, nodeNames]
   );
 
   const discoverySeedPod = useMemo(
@@ -361,7 +446,19 @@ export function TopologyView() {
           type?: string;
           seed_pod_id?: number;
           snapshot?: TopologyDiscoveryResponse;
+          updated_count?: number;
         };
+
+        if (message.type === "hostname.sync") {
+          void queryClient.invalidateQueries({ queryKey: ["pods"] });
+          if (discoverySeedId !== null) {
+            void refetchDiscovery();
+          }
+          if ((message.updated_count ?? 0) > 0) {
+            pushLinkNotice("ok", `Hostname sync updated ${message.updated_count} node(s).`);
+          }
+          return;
+        }
 
         if (message.type !== "topology.discovery") return;
         if (message.seed_pod_id !== discoverySeedId) return;
@@ -377,7 +474,7 @@ export function TopologyView() {
     return () => {
       socket.close();
     };
-  }, [discoveryMode, discoverySeedId, pushLinkNotice, queryClient]);
+  }, [discoveryMode, discoverySeedId, pushLinkNotice, queryClient, refetchDiscovery]);
 
   useEffect(() => {
     if (!activeEdge) return;
@@ -689,6 +786,54 @@ export function TopologyView() {
     void discoveryQuery.refetch();
   }, [closeQuickConfig, discoveryQuery, discoverySeedId, pushLinkNotice]);
 
+  const runDiscoverAll = useCallback(() => {
+    if (podCount === 0) {
+      pushLinkNotice("warn", "No nodes available for discover-all.");
+      return;
+    }
+
+    setActiveEdgeId(null);
+    setActiveNodeId(null);
+    closeQuickConfig();
+
+    discoverAllMutation.mutate(
+      { max_hops: 3 },
+      {
+        onSuccess: (result) => {
+          setLastDiscoverAll(result);
+          if (discoverySeedId !== null) {
+            void refetchDiscovery();
+          }
+
+          const previewFailures = result.items
+            .filter((entry) => !entry.success)
+            .slice(0, 2)
+            .map((entry) => entry.pod_name)
+            .join(", ");
+
+          if (result.failed > 0) {
+            pushLinkNotice(
+              "warn",
+              `Discover-all finished: ${result.successful}/${result.total} ok${previewFailures ? ` · failed: ${previewFailures}` : ""}.`
+            );
+          } else {
+            pushLinkNotice("ok", `Discover-all finished: ${result.successful}/${result.total} nodes mapped.`);
+          }
+        },
+        onError: (error) => {
+          pushLinkNotice("warn", `Discover-all failed: ${error.message}`);
+        },
+      }
+    );
+  }, [
+    closeQuickConfig,
+    discoverAllMutation,
+    discoverySeedId,
+    podCount,
+    pushLinkNotice,
+    refetchDiscovery,
+  ]);
+
   const openBuilderFromQuickConfig = useCallback(() => {
     if (!quickConfigPod) return;
     selectPod(quickConfigPod as LabPod);
@@ -757,6 +902,15 @@ export function TopologyView() {
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={runDiscoverAll}
+            disabled={discoverAllMutation.isPending || podCount === 0}
+            className="btn-ghost text-xs gap-1.5 micro-tap"
+            title="Run discovery across all owned nodes"
+          >
+            <RefreshCw className={cn("w-3.5 h-3.5", discoverAllMutation.isPending && "animate-spin")} />
+            Discover all
+          </button>
           <button
             onClick={runDiscovery}
             className="btn-ghost text-xs gap-1.5 micro-tap"
@@ -895,11 +1049,37 @@ export function TopologyView() {
                   >
                     Refresh discovery
                   </button>
+                  <button
+                    type="button"
+                    onClick={runDiscoverAll}
+                    disabled={podCount === 0 || discoverAllMutation.isPending}
+                    className="btn-hud text-xs flex-1 micro-tap"
+                  >
+                    {discoverAllMutation.isPending ? "Discovering all..." : "Discover all"}
+                  </button>
                 </div>
 
                 <p className="text-2xs font-mono text-ink-muted">
                   Link labels and ports update in real time as LLDP/CDP snapshots arrive.
                 </p>
+
+                <div className="rounded-xl border border-edge-subtle bg-void/60 px-3 py-2">
+                  <p className="text-2xs font-mono uppercase tracking-[0.16em] text-ink-muted">discovery commands</p>
+                  <p className="mt-1 text-2xs font-mono text-cyan-100 truncate">
+                    {discoveryQuery.data?.commands?.length
+                      ? discoveryQuery.data.commands.join(" · ")
+                      : "show lldp neighbors detail · show cdp neighbors detail"}
+                  </p>
+                </div>
+
+                {lastDiscoverAll && (
+                  <div className="rounded-xl border border-edge-subtle bg-void/60 px-3 py-2">
+                    <p className="text-2xs font-mono uppercase tracking-[0.16em] text-ink-muted">fleet run</p>
+                    <p className="mt-1 text-2xs font-mono text-cyan-100">
+                      {lastDiscoverAll.successful}/{lastDiscoverAll.total} success · {lastDiscoverAll.failed} failed
+                    </p>
+                  </div>
+                )}
 
                 {discoveryWarnings.length > 0 && (
                   <div className="rounded-xl border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-[11px] leading-4 font-mono text-amber-100">
@@ -1133,6 +1313,91 @@ export function TopologyView() {
                     </div>
                   </div>
 
+                  <div className="mt-3">
+                    <ConnectionLedger title="connected devices" rows={activeNodeLedger} />
+                  </div>
+
+                  <div className="mt-3 rounded-xl border border-edge-subtle bg-void/60 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-2xs font-mono uppercase tracking-[0.16em] text-ink-muted">interface governance</p>
+                      <span className="telemetry-chip px-2 py-0.5 text-2xs">
+                        {disabledInterfaceCount} disabled
+                      </span>
+                    </div>
+
+                    {activeGovernancePodId === null ? (
+                      <p className="mt-2 text-xs text-ink-muted">External/discovered nodes cannot be governed directly.</p>
+                    ) : activeInterfacesQuery.isLoading || activeInterfacesQuery.isFetching ? (
+                      <p className="mt-2 text-xs text-ink-muted">Loading interface status...</p>
+                    ) : interfaceRows.length === 0 ? (
+                      <p className="mt-2 text-xs text-ink-muted">No interfaces discovered yet for this node.</p>
+                    ) : (
+                      <div className="mt-2 max-h-44 space-y-1.5 overflow-y-auto pr-1">
+                        {interfaceRows.slice(0, 20).map((row) => (
+                          <div key={row.interface_name} className="rounded-lg border border-edge-subtle bg-void/72 px-2.5 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-2xs font-mono text-cyan-100 truncate">{row.interface_name}</p>
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className={cn(
+                                    "telemetry-chip px-1.5 py-0.5 text-2xs uppercase",
+                                    row.connected
+                                      ? "border-amber-300/35 text-amber-200"
+                                      : "border-matrix/35 text-matrix"
+                                  )}
+                                >
+                                  {row.connected ? "linked" : "idle"}
+                                </span>
+                                <span
+                                  className={cn(
+                                    "telemetry-chip px-1.5 py-0.5 text-2xs uppercase",
+                                    row.disabled
+                                      ? "border-crimson/35 text-crimson"
+                                      : "border-edge-subtle text-cyan-200"
+                                  )}
+                                >
+                                  {row.disabled ? "disabled" : "enabled"}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="mt-1 flex items-center justify-between gap-2">
+                              <p className="text-2xs font-mono text-ink-muted">peers: {row.peer_count}</p>
+                              <button
+                                type="button"
+                                disabled={
+                                  setInterfaceStateMutation.isPending
+                                  || (row.connected && !row.disabled)
+                                }
+                                onClick={() => {
+                                  if (activeGovernancePodId === null) return;
+                                  setInterfaceStateMutation.mutate(
+                                    {
+                                      podId: activeGovernancePodId,
+                                      interface_name: row.interface_name,
+                                      disabled: !row.disabled,
+                                    },
+                                    {
+                                      onSuccess: () => {
+                                        void activeInterfacesQuery.refetch();
+                                        pushLinkNotice("ok", `${row.interface_name} ${row.disabled ? "enabled" : "disabled"}.`);
+                                      },
+                                      onError: (error) => {
+                                        pushLinkNotice("warn", error.message);
+                                      },
+                                    }
+                                  );
+                                }}
+                                className="btn-ghost text-2xs px-2 py-1"
+                              >
+                                {row.connected && !row.disabled ? "Connected" : row.disabled ? "Enable" : "Disable"}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="mt-3 flex-1 min-h-0 overflow-y-auto pr-1 space-y-3">
                     {activeNode.data.discovery?.protocols && activeNode.data.discovery.protocols.length > 0 && (
                       <div className="rounded-xl border border-edge-subtle bg-void/60 p-3">
@@ -1358,6 +1623,10 @@ export function TopologyView() {
                                 <span className="text-xs text-ink-muted">No links yet</span>
                               )}
                           </div>
+                        </div>
+
+                        <div className="mt-3">
+                          <ConnectionLedger title="connected devices" rows={activeQuickLedger} compact />
                         </div>
                       </section>
 

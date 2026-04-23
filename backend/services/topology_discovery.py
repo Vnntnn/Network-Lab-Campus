@@ -4,6 +4,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from hashlib import md5
 from math import cos, pi, sin
+import re
 from typing import Iterable
 
 from fastapi import HTTPException
@@ -27,6 +28,8 @@ from services.device_executor import _conn_kwargs
 
 
 DISCOVERY_MAX_HOPS = 3
+
+_IPV4_PATTERN = re.compile(r"^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$")
 
 
 DISCOVERY_COMMANDS: dict[str, list[tuple[str, str]]] = {
@@ -94,6 +97,49 @@ def _clean(value: object | None) -> str:
     if value is None:
         return ""
     return " ".join(str(value).split()).strip()
+
+
+def _is_ipv4(value: str) -> bool:
+    return bool(_IPV4_PATTERN.match(value))
+
+
+def _preferred_hostname(*values: str | None) -> str | None:
+    for value in values:
+        cleaned = _clean(value)
+        if not cleaned:
+            continue
+
+        candidate = cleaned.splitlines()[-1].strip().split(" ", 1)[0].rstrip(".,;:")
+        if not candidate:
+            continue
+
+        if "@" in candidate:
+            candidate = candidate.rsplit("@", 1)[-1]
+
+        if not _is_ipv4(candidate) and "." in candidate:
+            candidate = candidate.split(".", 1)[0]
+
+        candidate = candidate.strip()
+        if candidate:
+            return candidate
+
+    return None
+
+
+def _hostname_from_prompt(prompt: str | None) -> str | None:
+    cleaned = _clean(prompt)
+    if not cleaned:
+        return None
+
+    current = cleaned.splitlines()[-1]
+    current = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", current)
+    current = re.sub(r"[>#]\s*$", "", current).strip()
+    current = re.sub(r"\([^)]*\)$", "", current).strip()
+
+    if ":" in current:
+        current = current.rsplit(":", 1)[-1].strip()
+
+    return _preferred_hostname(current)
 
 
 def _normalize_identity(value: str | None) -> str:
@@ -243,7 +289,11 @@ def _build_actual_device(pod: LabPod, *, is_seed: bool = False) -> TopologyDevic
 
 
 def _build_external_device(seed_id: int, observation: DiscoveryObservation) -> TopologyDeviceRead:
-    primary_name = observation.remote_name or observation.management_address or observation.chassis_id or "unknown neighbor"
+    primary_name = _preferred_hostname(
+        observation.remote_name,
+        observation.management_address,
+        observation.chassis_id,
+    ) or "unknown neighbor"
     return TopologyDeviceRead(
         id=_external_id(seed_id, primary_name),
         pod_number=None,
@@ -423,11 +473,17 @@ def _build_node_from_aggregate(node_key: str, aggregate: NodeAggregate, position
 async def _scan_device(
     pod: LabPod,
     commands: list[tuple[str, str]],
-) -> tuple[list[DiscoveryObservation], list[str]]:
+) -> tuple[list[DiscoveryObservation], list[str], str | None]:
     template_platform = TEMPLATE_PLATFORM_MAP.get(pod.device_type, "cisco_ios")
 
     try:
         async with AsyncScrapli(**_conn_kwargs(pod)) as conn:
+            local_hostname = None
+            try:
+                local_hostname = _hostname_from_prompt(await conn.get_prompt())
+            except Exception:
+                local_hostname = None
+
             command_outputs = []
             for _, command in commands:
                 response = await conn.send_command(command)
@@ -441,7 +497,42 @@ async def _scan_device(
 
         observations.extend(_to_observations(protocol, command, _parse_rows(template_platform, command, matching_output)))
 
-    return observations, [command for _, command in commands]
+    return observations, [command for _, command in commands], local_hostname
+
+
+async def _probe_hostname_only(pod: LabPod) -> str | None:
+    try:
+        async with AsyncScrapli(**_conn_kwargs(pod)) as conn:
+            return _hostname_from_prompt(await conn.get_prompt())
+    except Exception:
+        return None
+
+
+async def sync_known_pod_hostnames(
+    db: AsyncSession,
+    *,
+    owner_id: str | None = None,
+) -> list[int]:
+    stmt = select(LabPod)
+    if owner_id is not None:
+        stmt = stmt.where(LabPod.owner_id == owner_id)
+
+    result = await db.execute(stmt)
+    pods = result.scalars().all()
+
+    updated_ids: list[int] = []
+    for pod in pods:
+        hostname = await _probe_hostname_only(pod)
+        if not hostname or hostname == pod.pod_name:
+            continue
+
+        pod.pod_name = hostname
+        updated_ids.append(pod.id)
+
+    if updated_ids:
+        await db.commit()
+
+    return updated_ids
 
 
 async def discover_topology(
@@ -477,6 +568,7 @@ async def discover_topology(
     edge_clusters: dict[str, DiscoveryCluster] = {}
     executed_commands: list[str] = []
     warnings: list[str] = []
+    hostname_updates_pending = False
 
     seed_device = _build_actual_device(seed, is_seed=True)
     seed_node_key = _node_key(seed_device)
@@ -514,12 +606,20 @@ async def discover_topology(
         current_aggregate.source_commands.update(command for _, command in current_commands)
 
         try:
-            observations, scanned_commands = await _scan_device(current_pod, current_commands)
+            observations, scanned_commands, local_hostname = await _scan_device(current_pod, current_commands)
         except HTTPException as exc:
             detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
             detail = detail.removeprefix("Discovery failed: ").strip()
             warnings.append(f"Discovery timed out on {current_pod.pod_name}: {detail or 'device unreachable'}")
             continue
+
+        if local_hostname:
+            current_aggregate.device.pod_name = local_hostname
+            if local_hostname != current_pod.pod_name:
+                current_pod.pod_name = local_hostname
+                hostname_updates_pending = True
+            for candidate in _identity_candidates(local_hostname):
+                pods_by_name[candidate] = current_pod
 
         executed_commands.extend(scanned_commands)
 
@@ -549,6 +649,18 @@ async def discover_topology(
             )
 
             if matched_pod:
+                discovered_remote_hostname = _preferred_hostname(
+                    observation.remote_name,
+                    observation.management_address,
+                    observation.chassis_id,
+                )
+                if discovered_remote_hostname:
+                    remote_device.pod_name = discovered_remote_hostname
+                    if discovered_remote_hostname != matched_pod.pod_name:
+                        matched_pod.pod_name = discovered_remote_hostname
+                        hostname_updates_pending = True
+                    for candidate in _identity_candidates(discovered_remote_hostname):
+                        pods_by_name[candidate] = matched_pod
                 remote_device.badge_label = remote_device.badge_label or f"pod {matched_pod.pod_number}"
 
             remote_key = _node_key(remote_device)
@@ -652,9 +764,12 @@ async def discover_topology(
 
     seed_node.data.badgeLabel = "seed"
 
+    if hostname_updates_pending:
+        await db.commit()
+
     return TopologyDiscoveryResponse(
         seed_pod_id=seed.id,
-        seed_pod_name=seed.pod_name,
+        seed_pod_name=seed_node.data.pod.pod_name,
         commands=_unique(executed_commands),
         nodes=[seed_node, *[node_nodes[key] for key in ordered_targets]],
         edges=edges,
