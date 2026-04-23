@@ -24,6 +24,7 @@ import {
   snmpSchema, type SnmpFormData,
   syslogSchema, type SyslogFormData,
   aaaSchema, type AaaFormData,
+  sshSchema, type SshFormData,
 } from "@/schemas/network";
 import { cn } from "@/components/ui/cn";
 import { type Feature } from "./verifyCommands";
@@ -42,21 +43,81 @@ function prefixToMask(prefix: number): string {
 
 export function buildInterfaceCommands(d: InterfaceFormData, dt: string): string[] {
   const isArista = dt === "arista_eos";
-  return [
-    `interface ${d.interface_name}`,
-    isArista
-      ? `   ip address ${d.ip_address}/${d.prefix_length}`
-      : `   ip address ${d.ip_address} ${prefixToMask(d.prefix_length)}`,
-    d.shutdown ? "   shutdown" : "   no shutdown",
-    "!",
-  ];
+  const cmds: string[] = [];
+  const hasIp = d.ip_address && d.prefix_length;
+
+  const ipLine = hasIp
+    ? (isArista
+        ? `   ip address ${d.ip_address}/${d.prefix_length}`
+        : `   ip address ${d.ip_address} ${prefixToMask(d.prefix_length!)}`)
+    : null;
+
+  // ── SVI: interface Vlan N ─────────────────────────────────────────────
+  if (d.mode === "svi") {
+    cmds.push(`interface Vlan${d.interface_name}`);
+    if (d.description) cmds.push(`   description ${d.description}`);
+    if (ipLine) cmds.push(ipLine);
+    cmds.push(d.shutdown ? "   shutdown" : "   no shutdown");
+    cmds.push("!");
+    return cmds;
+  }
+
+  // ── Sub-interface: dot1q encapsulation ───────────────────────────────
+  if (d.mode === "subinterface") {
+    cmds.push(`interface ${d.interface_name}`);
+    if (d.description) cmds.push(`   description ${d.description}`);
+    if (d.encap_vlan) {
+      cmds.push(isArista
+        ? `   encapsulation dot1q vlan ${d.encap_vlan}`
+        : `   encapsulation dot1Q ${d.encap_vlan}`);
+    }
+    if (ipLine) cmds.push(ipLine);
+    cmds.push(d.shutdown ? "   shutdown" : "   no shutdown");
+    cmds.push("!");
+    return cmds;
+  }
+
+  // ── Access port (L2) ─────────────────────────────────────────────────
+  if (d.mode === "access") {
+    cmds.push(`interface ${d.interface_name}`);
+    if (d.description) cmds.push(`   description ${d.description}`);
+    cmds.push("   switchport mode access");
+    if (d.access_vlan) cmds.push(`   switchport access vlan ${d.access_vlan}`);
+    cmds.push("   spanning-tree portfast");
+    cmds.push(d.shutdown ? "   shutdown" : "   no shutdown");
+    cmds.push("!");
+    return cmds;
+  }
+
+  // ── Trunk port (L2) ──────────────────────────────────────────────────
+  if (d.mode === "trunk") {
+    cmds.push(`interface ${d.interface_name}`);
+    if (d.description) cmds.push(`   description ${d.description}`);
+    cmds.push("   switchport mode trunk");
+    if (d.trunk_allowed_vlans) cmds.push(`   switchport trunk allowed vlan ${d.trunk_allowed_vlans}`);
+    if (d.native_vlan) cmds.push(`   switchport trunk native vlan ${d.native_vlan}`);
+    cmds.push(d.shutdown ? "   shutdown" : "   no shutdown");
+    cmds.push("!");
+    return cmds;
+  }
+
+  // ── Routed (default L3) ───────────────────────────────────────────────
+  cmds.push(`interface ${d.interface_name}`);
+  if (d.description) cmds.push(`   description ${d.description}`);
+  // On Cisco switches, explicitly make the port routed
+  if (!isArista) cmds.push("   no switchport");
+  if (ipLine) cmds.push(ipLine);
+  cmds.push(d.shutdown ? "   shutdown" : "   no shutdown");
+  cmds.push("!");
+  return cmds;
 }
 
-export function buildOspfCommands(d: OspfFormData, dt: string): string[] {
+export function buildOspfCommands(d: OspfFormData, _dt: string): string[] {
   const cmds = [`router ospf ${d.process_id}`];
   if (d.router_id) cmds.push(`   router-id ${d.router_id}`);
+  if (d.passive_default) cmds.push("   passive-interface default");
   for (const n of d.networks) cmds.push(`   network ${n.network} ${n.wildcard} area ${n.area}`);
-  if (dt === "arista_eos") cmds.push("   redistribute connected");
+  if (d.redistribute_connected) cmds.push("   redistribute connected subnets");
   cmds.push("!");
   return cmds;
 }
@@ -137,12 +198,35 @@ function SectionDivider({ label }: { label: string }) {
 
 // ── Interface form ────────────────────────────────────────────────────────
 
+const INTERFACE_MODES = [
+  { value: "routed",       label: "Routed (L3)",    hint: "IP address on a physical port" },
+  { value: "access",       label: "Access (L2)",    hint: "Switchport in a single VLAN" },
+  { value: "trunk",        label: "Trunk (L2)",     hint: "Carries multiple VLANs" },
+  { value: "svi",          label: "SVI (Vlan N)",   hint: "Layer-3 virtual VLAN interface" },
+  { value: "subinterface", label: "Sub-interface",  hint: "dot1q encap on a physical port" },
+] as const;
+
+function ShutdownToggle({ register }: { register: ReturnType<typeof useForm<InterfaceFormData>>["register"] }) {
+  return (
+    <label className="flex items-center gap-2.5 cursor-pointer select-none">
+      <div className="relative">
+        <input {...register("shutdown")} type="checkbox" className="sr-only peer" />
+        <div className="w-9 h-5 rounded-full bg-depth border border-edge-subtle peer-checked:bg-crimson/30 peer-checked:border-crimson/50 transition-colors" />
+        <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-ink-muted peer-checked:translate-x-4 peer-checked:bg-crimson transition-all duration-200" />
+      </div>
+      <span className="text-xs text-ink-secondary">Shutdown interface</span>
+    </label>
+  );
+}
+
 function InterfaceForm({ deviceType, onCommands }: { deviceType: string; onCommands: (c: string[]) => void }) {
   const { register, watch, formState: { errors } } = useForm<InterfaceFormData>({
     resolver: zodResolver(interfaceSchema),
-    defaultValues: { prefix_length: 24, shutdown: false },
+    defaultValues: { mode: "routed", prefix_length: 24, shutdown: false },
     mode: "onChange",
   });
+
+  const mode = watch("mode");
 
   useEffect(() => {
     const sub = watch((values) => {
@@ -152,34 +236,106 @@ function InterfaceForm({ deviceType, onCommands }: { deviceType: string; onComma
     return () => sub.unsubscribe();
   }, [watch, onCommands, deviceType]);
 
+  const ifPlaceholder =
+    mode === "svi"          ? "10 (→ interface Vlan10)"    :
+    mode === "subinterface" ? (deviceType === "arista_eos" ? "Ethernet1.10" : "GigabitEthernet0/0.10") :
+    deviceType === "arista_eos" ? "Ethernet1" : "GigabitEthernet0/0";
+
   return (
     <div className="space-y-4">
-      <Field label="Interface Name" error={errors.interface_name?.message}>
+      {/* Mode selector */}
+      <Field label="Interface Mode">
+        <div className="grid grid-cols-5 gap-1.5">
+          {INTERFACE_MODES.map((m) => (
+            <label
+              key={m.value}
+              title={m.hint}
+              className={cn(
+                "flex flex-col items-center gap-0.5 rounded-lg border px-2 py-2 cursor-pointer text-center transition-colors",
+                mode === m.value
+                  ? "border-cyan-300/60 bg-cyan-300/10 text-cyan-200"
+                  : "border-edge-subtle bg-void/50 text-ink-muted hover:border-edge-glow hover:text-ink-secondary"
+              )}
+            >
+              <input {...register("mode")} type="radio" value={m.value} className="sr-only" />
+              <span className="text-2xs font-mono leading-tight">{m.label}</span>
+            </label>
+          ))}
+        </div>
+      </Field>
+
+      {/* Interface name */}
+      <Field
+        label={mode === "svi" ? "VLAN ID" : "Interface Name"}
+        error={errors.interface_name?.message}
+      >
         <input
           {...register("interface_name")}
           className="input-field"
-          placeholder={deviceType === "arista_eos" ? "Ethernet1" : "GigabitEthernet0/0"}
+          placeholder={ifPlaceholder}
         />
       </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="IP Address" error={errors.ip_address?.message}>
-          <input {...register("ip_address")} className="input-field" placeholder="10.0.0.1" />
-        </Field>
-        <Field label="Prefix Length" error={errors.prefix_length?.message}>
+
+      {/* Description — all modes */}
+      <Field label="Description (opt.)" error={errors.description?.message}>
+        <input {...register("description")} className="input-field" placeholder="Uplink to core" />
+      </Field>
+
+      {/* ── Routed / SVI / Sub-interface: IP fields ── */}
+      {(mode === "routed" || mode === "svi" || mode === "subinterface") && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="IP Address" error={errors.ip_address?.message}>
+            <input {...register("ip_address")} className="input-field" placeholder="10.0.0.1" />
+          </Field>
+          <Field label="Prefix Length" error={errors.prefix_length?.message}>
+            <input
+              {...register("prefix_length", { valueAsNumber: true })}
+              className="input-field" type="number" min={1} max={32} placeholder="24"
+            />
+          </Field>
+        </div>
+      )}
+
+      {/* ── Sub-interface: encapsulation VLAN ── */}
+      {mode === "subinterface" && (
+        <Field label="Encapsulation VLAN (dot1q)" error={errors.encap_vlan?.message}>
           <input
-            {...register("prefix_length", { valueAsNumber: true })}
-            className="input-field" type="number" min={1} max={32} placeholder="24"
+            {...register("encap_vlan", { valueAsNumber: true })}
+            className="input-field" type="number" min={1} max={4094} placeholder="10"
           />
         </Field>
-      </div>
-      <label className="flex items-center gap-2.5 cursor-pointer select-none">
-        <div className="relative">
-          <input {...register("shutdown")} type="checkbox" className="sr-only peer" />
-          <div className="w-9 h-5 rounded-full bg-depth border border-edge-subtle peer-checked:bg-crimson/30 peer-checked:border-crimson/50 transition-colors" />
-          <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-ink-muted peer-checked:translate-x-4 peer-checked:bg-crimson transition-all duration-200" />
+      )}
+
+      {/* ── Access port: VLAN ── */}
+      {mode === "access" && (
+        <Field label="Access VLAN" error={errors.access_vlan?.message}>
+          <input
+            {...register("access_vlan", { valueAsNumber: true })}
+            className="input-field" type="number" min={1} max={4094} placeholder="100"
+          />
+        </Field>
+      )}
+
+      {/* ── Trunk port: allowed VLANs + native VLAN ── */}
+      {mode === "trunk" && (
+        <div className="space-y-3">
+          <Field label="Allowed VLANs" error={errors.trunk_allowed_vlans?.message}>
+            <input
+              {...register("trunk_allowed_vlans")}
+              className="input-field"
+              placeholder="10,20,30-40"
+            />
+          </Field>
+          <Field label="Native VLAN (opt.)" error={errors.native_vlan?.message}>
+            <input
+              {...register("native_vlan", { valueAsNumber: true })}
+              className="input-field" type="number" min={1} max={4094} placeholder="1"
+            />
+          </Field>
         </div>
-        <span className="text-xs text-ink-secondary">Shutdown interface</span>
-      </label>
+      )}
+
+      <ShutdownToggle register={register} />
     </div>
   );
 }
@@ -189,7 +345,7 @@ function InterfaceForm({ deviceType, onCommands }: { deviceType: string; onComma
 function OspfForm({ deviceType, onCommands }: { deviceType: string; onCommands: (c: string[]) => void }) {
   const { register, watch, control, formState: { errors } } = useForm<OspfFormData>({
     resolver: zodResolver(ospfSchema),
-    defaultValues: { process_id: 1, networks: [{ network: "", wildcard: "0.0.0.0", area: 0 }] },
+    defaultValues: { process_id: 1, networks: [{ network: "", wildcard: "0.0.0.0", area: 0 }], passive_default: false, redistribute_connected: false },
     mode: "onChange",
   });
   const { fields, append, remove } = useFieldArray({ control, name: "networks" });
@@ -211,6 +367,16 @@ function OspfForm({ deviceType, onCommands }: { deviceType: string; onCommands: 
         <Field label="Router ID (optional)" error={errors.router_id?.message}>
           <input {...register("router_id")} className="input-field" placeholder="1.1.1.1" />
         </Field>
+      </div>
+      <div className="flex gap-5">
+        <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-ink-secondary">
+          <input {...register("passive_default")} type="checkbox" className="accent-cyan-400" />
+          Passive-interface default
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-ink-secondary">
+          <input {...register("redistribute_connected")} type="checkbox" className="accent-cyan-400" />
+          Redistribute connected
+        </label>
       </div>
       <SectionDivider label="Networks" />
       {fields.map((field, i) => (
@@ -512,7 +678,7 @@ export function buildEigrpCommands(d: EigrpFormData, dt: string): string[] {
   return cmds;
 }
 
-function EigrpForm({ deviceType, onCommands }: { deviceType: string; onCommands: (c: string[]) => void }) {
+function EigrpFormInner({ deviceType, onCommands }: { deviceType: string; onCommands: (c: string[]) => void }) {
   const { register, watch, control, formState: { errors } } = useForm<EigrpFormData>({
     resolver: zodResolver(eigrpSchema),
     defaultValues: { as_number: 100, networks: [{ network: "", wildcard: "0.0.0.255" }], auto_summary: false, passive_default: false },
@@ -571,6 +737,20 @@ function EigrpForm({ deviceType, onCommands }: { deviceType: string; onCommands:
       </button>
     </div>
   );
+}
+
+function EigrpForm({ deviceType, onCommands }: { deviceType: string; onCommands: (c: string[]) => void }) {
+  if (deviceType === "arista_eos") {
+    return (
+      <div className="rounded-xl border border-amber-400/30 bg-amber-400/8 p-4 space-y-2">
+        <p className="text-xs font-semibold text-amber-300">EIGRP not supported on Arista EOS</p>
+        <p className="text-2xs text-ink-muted">
+          Arista EOS does not implement EIGRP. Use OSPF or BGP for dynamic routing on this device.
+        </p>
+      </div>
+    );
+  }
+  return <EigrpFormInner deviceType={deviceType} onCommands={onCommands} />;
 }
 
 // ── DHCP form ─────────────────────────────────────────────────────────────
@@ -779,7 +959,8 @@ export function buildNatCommands(d: NatFormData): string[] {
   if (d.nat_type === "static" && d.local_ip && d.global_ip) {
     cmds.push(`ip nat inside source static ${d.local_ip} ${d.global_ip}`);
   } else if (d.nat_type === "dynamic" && d.acl_name && d.pool_name && d.pool_start && d.pool_end) {
-    cmds.push(`ip nat pool ${d.pool_name} ${d.pool_start} ${d.pool_end} netmask 255.255.255.0`);
+    const poolMask = d.pool_prefix ? prefixToMask(d.pool_prefix) : "255.255.255.0";
+    cmds.push(`ip nat pool ${d.pool_name} ${d.pool_start} ${d.pool_end} netmask ${poolMask}`);
     cmds.push(`ip nat inside source list ${d.acl_name} pool ${d.pool_name}`);
   } else if (d.nat_type === "overload" && d.acl_name) {
     cmds.push(`ip nat inside source list ${d.acl_name} interface ${d.outside_interface} overload`);
@@ -842,12 +1023,15 @@ function NatForm({ deviceType, onCommands }: { deviceType: string; onCommands: (
           <Field label="Pool Name" error={errors.pool_name?.message}>
             <input {...register("pool_name")} className="input-field" placeholder="NAT_POOL" />
           </Field>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <Field label="Pool Start" error={errors.pool_start?.message}>
               <input {...register("pool_start")} className="input-field" placeholder="203.0.113.10" />
             </Field>
             <Field label="Pool End" error={errors.pool_end?.message}>
               <input {...register("pool_end")} className="input-field" placeholder="203.0.113.20" />
+            </Field>
+            <Field label="Pool Prefix" error={errors.pool_prefix?.message}>
+              <input {...register("pool_prefix", { valueAsNumber: true })} className="input-field" type="number" min={1} max={32} placeholder="24" />
             </Field>
           </div>
         </>
@@ -952,9 +1136,14 @@ function PortChannelForm({ deviceType, onCommands }: { deviceType: string; onCom
 
 // ── STP form ──────────────────────────────────────────────────────────────
 
-export function buildStpCommands(d: StpFormData): string[] {
+export function buildStpCommands(d: StpFormData, dt: string): string[] {
+  const isArista = dt === "arista_eos";
   const cmds: string[] = [];
-  cmds.push(`spanning-tree mode ${d.mode}`);
+  // Arista does not support pvst — map to rapid-pvst
+  const mode = (isArista && d.mode === "pvst") ? "rapid-pvst" : d.mode;
+  // Arista uses "mstp" keyword, Cisco uses "mst"
+  const modeWord = isArista && mode === "mst" ? "mstp" : mode;
+  cmds.push(`spanning-tree mode ${modeWord}`);
   const vlan = d.vlan_id ?? 1;
   cmds.push(`spanning-tree vlan ${vlan} priority ${d.priority}`);
   for (const iface of d.portfast_interfaces) {
@@ -971,6 +1160,7 @@ export function buildStpCommands(d: StpFormData): string[] {
 }
 
 function StpForm({ deviceType, onCommands }: { deviceType: string; onCommands: (c: string[]) => void }) {
+  const isArista = deviceType === "arista_eos";
   const { register, watch, control, formState: { errors } } = useForm<StpFormData>({
     resolver: zodResolver(stpSchema),
     defaultValues: { mode: "rapid-pvst", priority: 32768, portfast_interfaces: [], bpduguard_interfaces: [] },
@@ -982,7 +1172,7 @@ function StpForm({ deviceType, onCommands }: { deviceType: string; onCommands: (
   useEffect(() => {
     const sub = watch((values) => {
       const r = stpSchema.safeParse(values);
-      onCommands(r.success ? buildStpCommands(r.data) : []);
+      onCommands(r.success ? buildStpCommands(r.data, deviceType) : []);
     });
     return () => sub.unsubscribe();
   }, [watch, onCommands, deviceType]);
@@ -993,9 +1183,10 @@ function StpForm({ deviceType, onCommands }: { deviceType: string; onCommands: (
         <Field label="Mode" error={errors.mode?.message}>
           <div className="relative">
             <select {...register("mode")} className="input-field appearance-none pr-8">
-              <option value="pvst">PVST+</option>
+              {/* pvst is Cisco-only */}
+              {!isArista && <option value="pvst">PVST+</option>}
               <option value="rapid-pvst">Rapid PVST+</option>
-              <option value="mst">MST</option>
+              <option value="mst">{isArista ? "MSTP" : "MST"}</option>
             </select>
             <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" />
           </div>
@@ -1769,29 +1960,115 @@ function AaaForm({ onCommands }: { onCommands: (c: string[]) => void }) {
   );
 }
 
+// ── SSH / VTY form ────────────────────────────────────────────────────────
+
+export function buildSshCommands(d: SshFormData, dt: string): string[] {
+  const isArista = dt === "arista_eos";
+  const cmds: string[] = [];
+
+  if (isArista) {
+    // Arista auto-generates keys; configure management SSH and VTY
+    cmds.push("management ssh");
+    cmds.push(`   idle-timeout ${d.exec_timeout}`);
+    cmds.push("!");
+  } else {
+    // Cisco: generate RSA key + set SSH version
+    cmds.push(`crypto key generate rsa modulus ${d.modulus_bits}`);
+    cmds.push("ip ssh version 2");
+    cmds.push("!");
+  }
+
+  cmds.push(`line vty ${d.vty_lines}`);
+  cmds.push(`   login ${d.auth_method}`);
+  cmds.push("   transport input ssh");
+  if (!isArista) cmds.push(`   exec-timeout ${d.exec_timeout} 0`);
+  cmds.push("!");
+  return cmds;
+}
+
+function SshForm({ deviceType, onCommands }: { deviceType: string; onCommands: (c: string[]) => void }) {
+  const isArista = deviceType === "arista_eos";
+  const { register, watch, formState: { errors } } = useForm<SshFormData>({
+    resolver: zodResolver(sshSchema),
+    defaultValues: { modulus_bits: "2048", vty_lines: "0 4", auth_method: "local", exec_timeout: 5 },
+    mode: "onChange",
+  });
+
+  useEffect(() => {
+    const sub = watch((values) => {
+      const r = sshSchema.safeParse(values);
+      onCommands(r.success ? buildSshCommands(r.data, deviceType) : []);
+    });
+    return () => sub.unsubscribe();
+  }, [watch, onCommands, deviceType]);
+
+  return (
+    <div className="space-y-4">
+      {!isArista && (
+        <Field label="RSA Modulus (bits)" error={errors.modulus_bits?.message}>
+          <div className="relative">
+            <select {...register("modulus_bits")} className="input-field appearance-none pr-8">
+              <option value="1024">1024</option>
+              <option value="2048">2048 (recommended)</option>
+              <option value="4096">4096</option>
+            </select>
+            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" />
+          </div>
+        </Field>
+      )}
+      {isArista && (
+        <div className="rounded-xl border border-cyan-400/20 bg-cyan-400/6 px-3 py-2 text-2xs text-ink-muted font-mono">
+          Arista EOS auto-generates SSH keys. Only VTY and idle-timeout are configured.
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="VTY Lines" error={errors.vty_lines?.message}>
+          <input {...register("vty_lines")} className="input-field" placeholder="0 4" />
+        </Field>
+        <Field label="Exec Timeout (min)" error={errors.exec_timeout?.message}>
+          <input {...register("exec_timeout", { valueAsNumber: true })} className="input-field" type="number" min={0} max={35791} placeholder="5" />
+        </Field>
+      </div>
+      <Field label="Login Method" error={errors.auth_method?.message}>
+        <div className="relative">
+          <select {...register("auth_method")} className="input-field appearance-none pr-8">
+            <option value="local">local</option>
+            <option value="none">none</option>
+          </select>
+          <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" />
+        </div>
+      </Field>
+      <div className="rounded-xl border border-amber-400/20 bg-amber-400/6 px-3 py-2 text-2xs text-ink-muted font-mono">
+        ⚠ Make sure local users are configured (AAA module) before applying SSH-only VTY.
+      </div>
+    </div>
+  );
+}
+
 // ── Cluster navigation ───────────────────────────────────────────────────
 
 const FEATURES: { id: Feature; label: string }[] = [
-  { id: "interface", label: "Interface" },
-  { id: "ospf", label: "OSPF" },
-  { id: "eigrp", label: "EIGRP" },
-  { id: "bgp", label: "BGP" },
-  { id: "static", label: "Static" },
-  { id: "vrf", label: "VRF" },
-  { id: "prefixlist", label: "Prefix-List" },
-  { id: "routemap", label: "Route-Map" },
-  { id: "pbr", label: "PBR" },
-  { id: "qos", label: "QoS" },
-  { id: "vlan", label: "VLAN" },
-  { id: "dhcp", label: "DHCP" },
-  { id: "acl", label: "ACL" },
-  { id: "nat", label: "NAT" },
-  { id: "snmp", label: "SNMP" },
-  { id: "syslog", label: "Syslog" },
-  { id: "aaa", label: "AAA" },
+  { id: "interface",   label: "Interface" },
+  { id: "vlan",        label: "VLAN" },
+  { id: "stp",         label: "STP" },
   { id: "portchannel", label: "Port-Channel" },
-  { id: "stp", label: "STP" },
-  { id: "system", label: "System" },
+  { id: "ospf",        label: "OSPF" },
+  { id: "eigrp",       label: "EIGRP" },
+  { id: "bgp",         label: "BGP" },
+  { id: "static",      label: "Static Route" },
+  { id: "vrf",         label: "VRF" },
+  { id: "prefixlist",  label: "Prefix-List" },
+  { id: "routemap",    label: "Route-Map" },
+  { id: "pbr",         label: "PBR" },
+  { id: "dhcp",        label: "DHCP" },
+  { id: "acl",         label: "ACL" },
+  { id: "nat",         label: "NAT" },
+  { id: "ssh",         label: "SSH / VTY" },
+  { id: "aaa",         label: "AAA" },
+  { id: "qos",         label: "QoS" },
+  { id: "snmp",        label: "SNMP" },
+  { id: "syslog",      label: "Syslog" },
+  { id: "system",      label: "System" },
 ];
 
 const FEATURE_LABELS: Record<Feature, string> = FEATURES.reduce(
@@ -1805,43 +2082,49 @@ const FEATURE_GROUPS: Array<{
   features: Feature[];
 }> = [
   {
-    title: "Access Layer",
-    summary: "Bring interfaces, VLANs, and addressing online first.",
-    features: ["interface", "vlan", "dhcp", "acl", "nat"],
+    title: "Layer 2 — Switch",
+    summary: "Interface modes, VLANs, spanning tree, and link aggregation.",
+    features: ["interface", "vlan", "stp", "portchannel"],
   },
   {
-    title: "Routing Fabric",
-    summary: "Build the control plane, route policy, and segmentation.",
+    title: "Layer 3 — Routing",
+    summary: "Build the control plane with dynamic protocols, static routes, and segmentation.",
     features: ["ospf", "eigrp", "bgp", "static", "vrf", "prefixlist", "routemap", "pbr"],
   },
   {
+    title: "Security & Services",
+    summary: "Access control, address translation, SSH access, and DHCP.",
+    features: ["dhcp", "acl", "nat", "ssh", "aaa"],
+  },
+  {
     title: "Operations",
-    summary: "Tune control, visibility, resilience, and day-two config.",
-    features: ["qos", "snmp", "syslog", "aaa", "portchannel", "stp", "system"],
+    summary: "QoS, telemetry, syslog, and device identity.",
+    features: ["qos", "snmp", "syslog", "system"],
   },
 ];
 
 const FEATURE_DETAILS: Record<Feature, { summary: string; signal: string }> = {
-  interface: { summary: "Set interface IPs and admin state before wiring the rest of the topology.", signal: "edge-ready" },
-  ospf: { summary: "Add area-based routing for internal convergence.", signal: "igp" },
-  eigrp: { summary: "Fast lab routing with a compact configuration path.", signal: "igp" },
-  bgp: { summary: "Declare neighbors, ASNs, and advertised prefixes.", signal: "ebgp / ibgp" },
-  static: { summary: "Add default and edge routes without touching the dynamic protocol stack.", signal: "manual route" },
-  vrf: { summary: "Isolate tenants or services with route-target based separation.", signal: "segmentation" },
-  prefixlist: { summary: "Create reusable prefix filters for policy and route control.", signal: "filter" },
-  routemap: { summary: "Compose policy blocks for route transformation.", signal: "policy" },
-  pbr: { summary: "Steer selected traffic with explicit route-map rules.", signal: "traffic steering" },
-  qos: { summary: "Shape, mark, and prioritize the traffic that matters most.", signal: "service class" },
-  vlan: { summary: "Partition access ports into logical broadcast domains.", signal: "layer 2" },
-  dhcp: { summary: "Hand out addresses and exclusions for lab segments.", signal: "addressing" },
-  acl: { summary: "Lock down traffic with top-down permit and deny entries.", signal: "security" },
-  nat: { summary: "Translate inside to outside with static, dynamic, or PAT logic.", signal: "translation" },
-  snmp: { summary: "Expose telemetry and trap targets for the device.", signal: "telemetry" },
-  syslog: { summary: "Send structured logs to your monitoring endpoint.", signal: "observability" },
-  aaa: { summary: "Centralize authentication, authorization, and accounting.", signal: "access control" },
-  portchannel: { summary: "Bundle uplinks into a single logical interface.", signal: "aggregation" },
-  stp: { summary: "Protect the layer-2 fabric and tune spanning tree behavior.", signal: "loop guard" },
-  system: { summary: "Set host identity, DNS, NTP, and banner policy.", signal: "system" },
+  interface:   { summary: "Routed port, access, trunk, SVI (Vlan N), or sub-interface with dot1q encap.", signal: "L2 / L3" },
+  vlan:        { summary: "Create VLAN database entries and set their state.", signal: "layer 2" },
+  stp:         { summary: "Protect the L2 fabric — set mode, priority, portfast, and BPDUguard.", signal: "loop guard" },
+  portchannel: { summary: "Bundle physical uplinks into a single logical LACP or static channel.", signal: "aggregation" },
+  ospf:        { summary: "Area-based IGP with passive-interface and optional connected redistribution.", signal: "igp" },
+  eigrp:       { summary: "Cisco-only fast IGP. Not available on Arista EOS.", signal: "igp (cisco)" },
+  bgp:         { summary: "Declare neighbors, ASNs, and advertised prefixes for eBGP / iBGP.", signal: "ebgp / ibgp" },
+  static:      { summary: "Add default and edge routes without a dynamic protocol.", signal: "manual route" },
+  vrf:         { summary: "Isolate tenants or services with route-target based separation.", signal: "segmentation" },
+  prefixlist:  { summary: "Build reusable prefix filters for route policy.", signal: "filter" },
+  routemap:    { summary: "Compose match/set policy blocks for route transformation.", signal: "policy" },
+  pbr:         { summary: "Steer selected flows with explicit route-map rules applied per interface.", signal: "traffic steering" },
+  dhcp:        { summary: "Define address pools, exclusions, and lease times for lab segments.", signal: "addressing" },
+  acl:         { summary: "Standard or extended ACLs with top-down permit/deny entries.", signal: "security" },
+  nat:         { summary: "Static, dynamic pool, or PAT/overload address translation.", signal: "translation" },
+  ssh:         { summary: "Generate RSA keys, set SSH v2, and lock VTY lines to SSH-only access.", signal: "remote access" },
+  aaa:         { summary: "Centralize authentication, authorization, accounting, and local users.", signal: "access control" },
+  qos:         { summary: "Shape, mark, and prioritize traffic with class-maps and policy-maps.", signal: "service class" },
+  snmp:        { summary: "Expose SNMP community strings, trap targets, and device location.", signal: "telemetry" },
+  syslog:      { summary: "Send structured logs to remote syslog hosts at a chosen severity.", signal: "observability" },
+  system:      { summary: "Set hostname, domain, DNS, NTP, and MOTD banner.", signal: "system" },
 };
 
 function FeatureClusterCard({
@@ -1992,6 +2275,7 @@ export function GuiPane({ deviceType, onCommandsChange, onFeatureChange }: GuiPa
           {active === "snmp" && <SnmpForm onCommands={onCommandsChange} />}
           {active === "syslog" && <SyslogForm onCommands={onCommandsChange} />}
           {active === "aaa" && <AaaForm onCommands={onCommandsChange} />}
+          {active === "ssh" && <SshForm deviceType={deviceType} onCommands={onCommandsChange} />}
           {active === "portchannel" && <PortChannelForm deviceType={deviceType} onCommands={onCommandsChange} />}
           {active === "stp" && <StpForm deviceType={deviceType} onCommands={onCommandsChange} />}
           {active === "system" && <SystemForm deviceType={deviceType} onCommands={onCommandsChange} />}
