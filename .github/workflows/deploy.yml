@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 jobs:
   build:
@@ -36,6 +37,7 @@ jobs:
           file: deploy/docker/backend.Dockerfile
           push: true
           tags: ghcr.io/${{ steps.owner.outputs.name }}/network-lab-backend:latest
+          provenance: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -46,6 +48,7 @@ jobs:
           file: deploy/docker/frontend.Dockerfile
           push: true
           tags: ghcr.io/${{ steps.owner.outputs.name }}/network-lab-frontend:latest
+          provenance: false
           build-args: |
             VITE_API_BASE_URL=/api/v1
             VITE_WS_BASE_URL=
