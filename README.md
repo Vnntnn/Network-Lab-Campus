@@ -1,4 +1,5 @@
 # Network-configuration-management-platform
+[![Build & Push](https://github.com/Vnntnn/Network-Lab-Campus/actions/workflows/deploy.yml/badge.svg)](https://github.com/Vnntnn/Network-Lab-Campus/actions/workflows/deploy.yml)
 
 Web based application that makes network device configuration easier to learn.
 
