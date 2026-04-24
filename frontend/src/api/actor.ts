@@ -21,7 +21,13 @@ export function resolveActorId(): string {
   if (stored) return stored;
 
   const configured = normalizeActorId(import.meta.env.VITE_ACTOR_ID);
-  const generated = normalizeActorId(`user-${crypto.randomUUID().slice(0, 12)}`);
+  const uuid =
+    typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : Array.from(crypto.getRandomValues(new Uint8Array(6)))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+  const generated = normalizeActorId(`user-${uuid.slice(0, 12)}`);
   const actorId = configured || generated || FALLBACK_ACTOR_ID;
 
   window.localStorage.setItem(ACTOR_STORAGE_KEY, actorId);

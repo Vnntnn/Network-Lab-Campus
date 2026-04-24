@@ -23,7 +23,7 @@ export const useHistoryStore = create<HistoryStore>((set) => ({
   add: (entry) =>
     set((s) => ({
       entries: [
-        { ...entry, id: crypto.randomUUID() },
+        { ...entry, id: typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 8) },
         ...s.entries,
       ].slice(0, 50), // keep last 50
     })),

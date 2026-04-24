@@ -1,0 +1,36 @@
+services:
+  backend:
+    image: ghcr.io/vnntnn/network-lab-backend:latest
+    container_name: network-platform-backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:///./data/nexus_edu.db}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://127.0.0.1}
+    volumes:
+      - backend_data:/app/data
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/vnntnn/network-lab-frontend:latest
+    container_name: network-platform-frontend
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: network-platform-watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /root/.docker/config.json:/config.json:ro
+    environment:
+      WATCHTOWER_POLL_INTERVAL: 60        # check every 60 seconds
+      WATCHTOWER_CLEANUP: "true"          # remove old images after update
+      WATCHTOWER_INCLUDE_STOPPED: "false"
+    restart: unless-stopped
+
+volumes:
+  backend_data:
