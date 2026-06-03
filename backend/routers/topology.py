@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -227,10 +227,13 @@ async def get_routes_analytics(
 
 @router.post("/discover-all", response_model=TopologyDiscoverAllResponse)
 async def discover_all(
+    response: Response,
     max_hops: int = Query(3, ge=1, le=5),
     db: AsyncSession = Depends(get_db),
     actor_id: str = Depends(get_actor_id),
 ):
+    response.headers["Deprecation"] = "true"
+    response.headers["Link"] = '</api/v1/topology/discover-all/jobs>; rel="successor-version"'
     started_at = datetime.now(timezone.utc)
     result = await db.execute(
         select(LabPod)
@@ -239,10 +242,10 @@ async def discover_all(
     )
     pods = result.scalars().all()
 
-    items: list[TopologyDiscoverAllItem] = []
-    for pod in pods:
+    async def _discover_one(pod: LabPod) -> TopologyDiscoverAllItem:
         try:
-            snapshot = await discover_topology(db, pod.id, max_hops=max_hops, owner_id=actor_id)
+            async with AsyncSessionLocal() as task_db:
+                snapshot = await discover_topology(task_db, pod.id, max_hops=max_hops, owner_id=actor_id)
             await broadcast(
                 {
                     "type": "topology.discovery",
@@ -250,27 +253,27 @@ async def discover_all(
                     "snapshot": snapshot.model_dump(mode="json"),
                 }
             )
-            items.append(
-                TopologyDiscoverAllItem(
-                    pod_id=pod.id,
-                    pod_name=pod.pod_name,
-                    success=True,
-                    discovered_at=snapshot.discovered_at,
-                    node_count=len(snapshot.nodes),
-                    edge_count=len(snapshot.edges),
-                    warnings=snapshot.warnings,
-                )
+            return TopologyDiscoverAllItem(
+                pod_id=pod.id,
+                pod_name=pod.pod_name,
+                success=True,
+                discovered_at=snapshot.discovered_at,
+                node_count=len(snapshot.nodes),
+                edge_count=len(snapshot.edges),
+                warnings=snapshot.warnings,
             )
         except Exception as exc:  # pragma: no cover - defensive fallback for transport failures
             detail = str(getattr(exc, "detail", exc))
-            items.append(
-                TopologyDiscoverAllItem(
-                    pod_id=pod.id,
-                    pod_name=pod.pod_name,
-                    success=False,
-                    error=detail,
-                )
+            return TopologyDiscoverAllItem(
+                pod_id=pod.id,
+                pod_name=pod.pod_name,
+                success=False,
+                error=detail,
             )
+
+    items: list[TopologyDiscoverAllItem] = list(
+        await asyncio.gather(*[_discover_one(pod) for pod in pods])
+    )
 
     successful = sum(1 for item in items if item.success)
     failed = len(items) - successful

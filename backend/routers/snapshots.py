@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +10,10 @@ from services.device_executor import push_commands, run_show_commands
 from services.ownership import get_owned_pod, get_owned_snapshot
 
 router = APIRouter(prefix="/snapshots", tags=["snapshots"])
+
+
+class SnapshotCaptureError(Exception):
+    pass
 
 
 def _extract_running_config(show_result) -> str:
@@ -28,7 +32,7 @@ async def create_snapshot_record(
 ) -> Snapshot:
     pod = await get_owned_pod(db, pod_id, actor_id) if actor_id else await db.get(LabPod, pod_id)
     if not pod:
-        raise HTTPException(status_code=404, detail="Pod not found")
+        raise SnapshotCaptureError(f"Pod {pod_id} not found")
 
     show_result = await run_show_commands(pod, ["show running-config"])
     content = _extract_running_config(show_result)
@@ -55,6 +59,7 @@ async def capture_snapshot_background(
 @router.get("/pod/{pod_id}", response_model=list[SnapshotRead])
 async def list_snapshots(
     pod_id: int,
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     actor_id: str = Depends(get_actor_id),
 ):
@@ -66,7 +71,7 @@ async def list_snapshots(
         select(Snapshot)
         .where(Snapshot.pod_id == pod_id)
         .order_by(Snapshot.created_at.desc())
-        .limit(50)
+        .limit(limit)
     )
     return result.scalars().all()
 
@@ -78,7 +83,10 @@ async def capture_snapshot(
     db: AsyncSession = Depends(get_db),
     actor_id: str = Depends(get_actor_id),
 ):
-    return await create_snapshot_record(db=db, pod_id=pod_id, label=label, actor_id=actor_id)
+    try:
+        return await create_snapshot_record(db=db, pod_id=pod_id, label=label, actor_id=actor_id)
+    except SnapshotCaptureError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @router.post("/{snap_id}/rollback")

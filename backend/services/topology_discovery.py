@@ -24,7 +24,7 @@ from schemas import (
     TopologyNodeRead,
     TopologyPoint,
 )
-from services.device_executor import _conn_kwargs
+from services.device_executor import build_conn_kwargs
 
 
 DISCOVERY_MAX_HOPS = 3
@@ -477,7 +477,7 @@ async def _scan_device(
     template_platform = TEMPLATE_PLATFORM_MAP.get(pod.device_type, "cisco_ios")
 
     try:
-        async with AsyncScrapli(**_conn_kwargs(pod)) as conn:
+        async with AsyncScrapli(**build_conn_kwargs(pod)) as conn:
             local_hostname = None
             try:
                 local_hostname = _hostname_from_prompt(await conn.get_prompt())
@@ -502,7 +502,7 @@ async def _scan_device(
 
 async def _probe_hostname_only(pod: LabPod) -> str | None:
     try:
-        async with AsyncScrapli(**_conn_kwargs(pod)) as conn:
+        async with AsyncScrapli(**build_conn_kwargs(pod)) as conn:
             return _hostname_from_prompt(await conn.get_prompt())
     except Exception:
         return None

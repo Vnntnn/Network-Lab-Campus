@@ -1,6 +1,6 @@
 import os
 
-from sqlalchemy import inspect, text
+from sqlalchemy import event, inspect, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
@@ -9,6 +9,13 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./nexus_edu.db")
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _set_sqlite_pragmas(dbapi_connection, _connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
 DEFAULT_OWNER_ID = "default"
 
 
@@ -127,6 +134,7 @@ def _ensure_lab_pods_columns(sync_conn: Connection) -> None:
         "auto_detected": "BOOLEAN NOT NULL DEFAULT 0",
         "identity_id": "INTEGER",
         "display_name": "VARCHAR(64)",
+        "last_seen_at": "DATETIME",
     }
 
     for column_name, ddl in column_defs.items():
@@ -181,6 +189,13 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db() -> None:
+    async with engine.connect() as conn:
+        await conn.execute(text("PRAGMA journal_mode=WAL"))
+        await conn.execute(text("PRAGMA synchronous=NORMAL"))
+        await conn.commit()
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_lab_pods_schema)
+        from services.credentials import encrypt_existing_credentials
+        await conn.run_sync(encrypt_existing_credentials)

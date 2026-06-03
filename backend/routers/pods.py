@@ -1,12 +1,16 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import DEFAULT_OWNER_ID, get_db
-from deps import get_actor_id
-from models import CredentialIdentity, LabPod
+from database import get_db
+from deps import DEFAULT_ACTOR_ID, get_actor_id
+from models import CredentialIdentity, LabPod, PodDisabledInterface, Snapshot
 from schemas import (
+    BulkPodImport,
+    BulkPodImportResult,
     DeviceDiscoveryRequest,
     DeviceDiscoveryResponse,
     LabPodCreate,
@@ -16,8 +20,9 @@ from schemas import (
     PodInterfaceSetRequest,
     PodInterfacesResponse,
 )
-from services.device_executor import run_show_commands
+from services.credentials import encrypt_credential
 from services.device_discovery import discover_device
+from services.device_executor import run_show_commands
 from services.identities import resolve_identity_credentials
 from services.interface_governance import get_pod_interfaces, set_interface_disabled_state
 from services.ownership import get_owned_pod
@@ -26,10 +31,9 @@ router = APIRouter(prefix="/pods", tags=["pods"])
 
 
 def _to_lab_pod_read(pod: LabPod, identity_names: dict[int, str]) -> LabPodRead:
-    payload = LabPodRead.model_validate(pod, from_attributes=True).model_dump()
-    if pod.identity_id is not None:
-        payload["identity_name"] = identity_names.get(pod.identity_id)
-    return LabPodRead(**payload)
+    m = LabPodRead.model_validate(pod, from_attributes=True)
+    m.identity_name = identity_names.get(pod.identity_id) if pod.identity_id is not None else None
+    return m
 
 
 async def _identity_name_map(db: AsyncSession, actor_id: str) -> dict[int, str]:
@@ -52,12 +56,12 @@ async def list_pods(
     )
     pods = result.scalars().all()
 
-    if pods or actor_id == DEFAULT_OWNER_ID:
+    if pods or actor_id == DEFAULT_ACTOR_ID:
         return [_to_lab_pod_read(pod, identity_names) for pod in pods]
 
     seed_result = await db.execute(
         select(LabPod)
-        .where(LabPod.owner_id == DEFAULT_OWNER_ID)
+        .where(LabPod.owner_id == DEFAULT_ACTOR_ID)
         .order_by(LabPod.pod_number)
     )
     seed_pods = seed_result.scalars().all()
@@ -126,7 +130,7 @@ async def create_pod(
     )
     body["identity_id"] = resolved_identity_id
     body["ssh_username"] = resolved_username or ""
-    body["ssh_password"] = resolved_password or ""
+    body["ssh_password"] = encrypt_credential(resolved_password or "")
 
     if body.get("connection_protocol") == "ssh":
         if not body.get("ssh_username") or not body.get("ssh_password"):
@@ -160,7 +164,7 @@ async def update_pod(
     if {"identity_id", "ssh_username", "ssh_password", "connection_protocol"} & set(updates.keys()):
         requested_identity_id = updates.get("identity_id", pod.identity_id)
         requested_username = updates.get("ssh_username", pod.ssh_username)
-        requested_password = updates.get("ssh_password", pod.ssh_password)
+        requested_password = updates.get("ssh_password")
         resolved_identity_id, resolved_username, resolved_password, _ = await resolve_identity_credentials(
             db,
             actor_id=actor_id,
@@ -170,7 +174,10 @@ async def update_pod(
         )
         updates["identity_id"] = resolved_identity_id
         updates["ssh_username"] = resolved_username or ""
-        updates["ssh_password"] = resolved_password or ""
+        if resolved_identity_id is not None or "ssh_password" in updates:
+            updates["ssh_password"] = encrypt_credential(resolved_password or "")
+        else:
+            updates.pop("ssh_password", None)
 
     effective_protocol = updates.get("connection_protocol", pod.connection_protocol)
     effective_username = updates.get("ssh_username", pod.ssh_username)
@@ -201,6 +208,8 @@ async def delete_pod(
     pod = await get_owned_pod(db, pod_id, actor_id)
     if not pod:
         raise HTTPException(status_code=404, detail="Pod not found")
+    await db.execute(delete(Snapshot).where(Snapshot.pod_id == pod_id))
+    await db.execute(delete(PodDisabledInterface).where(PodDisabledInterface.pod_id == pod_id))
     await db.delete(pod)
     await db.commit()
 
@@ -211,7 +220,6 @@ async def ping_pod(
     db: AsyncSession = Depends(get_db),
     actor_id: str = Depends(get_actor_id),
 ):
-    """SSH into the device and run 'show version' to verify reachability."""
     pod = await get_owned_pod(db, pod_id, actor_id)
     if not pod:
         raise HTTPException(status_code=404, detail="Pod not found")
@@ -219,6 +227,9 @@ async def ping_pod(
     version_line = ""
     if result.success and result.results:
         version_line = result.results[0]["output"].splitlines()[0] if result.results[0]["output"] else ""
+    if result.success:
+        pod.last_seen_at = datetime.now(timezone.utc)
+        await db.commit()
     return PingResponse(
         reachable=result.success,
         version_line=version_line,
@@ -263,7 +274,6 @@ async def set_pod_interface_state(
 async def discover_device_endpoint(
     payload: DeviceDiscoveryRequest,
 ):
-    """Auto-discover Cisco device type, hostname, and other info."""
     result = await discover_device(
         device_ip=payload.device_ip,
         username=payload.ssh_username,
@@ -272,3 +282,33 @@ async def discover_device_endpoint(
         port=payload.port,
     )
     return DeviceDiscoveryResponse(**result)
+
+
+@router.post("/bulk", response_model=BulkPodImportResult)
+async def bulk_import_pods(
+    payload: BulkPodImport,
+    db: AsyncSession = Depends(get_db),
+    actor_id: str = Depends(get_actor_id),
+):
+    created = 0
+    failed = 0
+    errors = []
+    for pod_data in payload.pods:
+        try:
+            async with db.begin_nested():
+                pod = LabPod(
+                    owner_id=actor_id,
+                    **{
+                        **pod_data.model_dump(),
+                        "ssh_username": pod_data.ssh_username or "",
+                        "ssh_password": encrypt_credential(pod_data.ssh_password or ""),
+                    },
+                )
+                db.add(pod)
+                await db.flush()
+            created += 1
+        except Exception as e:
+            failed += 1
+            errors.append(f"Pod {pod_data.pod_name}: {str(e)[:120]}")
+    await db.commit()
+    return BulkPodImportResult(created=created, failed=failed, errors=errors)

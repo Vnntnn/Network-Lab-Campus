@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { ArrowLeft, Radio, ShieldCheck, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ArrowLeft, Radio, ShieldCheck, Trash2, X } from "lucide-react";
 import { motion } from "framer-motion";
 import { useAppStore } from "@/stores/appStore";
 import { useInstructorStore } from "@/stores/instructorStore";
@@ -47,11 +47,11 @@ function formatTime(ts: string) {
 export function InstructorView() {
   const setView = useAppStore((s) => s.setView);
 
-  const pin = useInstructorStore((s) => s.pin);
-  const authed = useInstructorStore((s) => s.authed);
-  const events = useInstructorStore((s) => s.events);
-  const wsStatus = useInstructorStore((s) => s.wsStatus);
-  const setPin = useInstructorStore((s) => s.setPin);
+  const pin       = useInstructorStore((s) => s.pin);
+  const authed    = useInstructorStore((s) => s.authed);
+  const events    = useInstructorStore((s) => s.events);
+  const wsStatus  = useInstructorStore((s) => s.wsStatus);
+  const setPin    = useInstructorStore((s) => s.setPin);
   const setAuthed = useInstructorStore((s) => s.setAuthed);
   const setStatus = useInstructorStore((s) => s.setStatus);
   const clearEvents = useInstructorStore((s) => s.clearEvents);
@@ -59,6 +59,9 @@ export function InstructorView() {
   useInstructorWS();
 
   const status = useMemo(() => STATUS_META[wsStatus], [wsStatus]);
+
+  const [podFilter,  setPodFilter]  = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
 
   const connect = () => {
     if (pin.length !== 4) return;
@@ -70,6 +73,26 @@ export function InstructorView() {
     setAuthed(false);
     setStatus("disconnected");
   };
+
+  const uniquePods = useMemo(() => {
+    const pods = new Set(events.map((e) => e.pod_name));
+    return Array.from(pods).sort();
+  }, [events]);
+
+  const filteredEvents = useMemo(() => {
+    return events.filter((e) => {
+      const podMatch  = podFilter === "all" || e.pod_name === podFilter;
+      const typeMatch =
+        typeFilter === "all"    ? true :
+        typeFilter === "push"   ? e.type === "push" :
+        false;
+      return podMatch && typeMatch;
+    });
+  }, [events, podFilter, typeFilter]);
+
+  const activeFilters: { label: string; clear: () => void }[] = [];
+  if (podFilter  !== "all") activeFilters.push({ label: `Pod: ${podFilter}`,   clear: () => setPodFilter("all") });
+  if (typeFilter !== "all") activeFilters.push({ label: `Type: ${typeFilter}`, clear: () => setTypeFilter("all") });
 
   return (
     <div className="w-screen h-screen bg-abyss relative overflow-hidden flex flex-col">
@@ -136,12 +159,59 @@ export function InstructorView() {
           </div>
         </div>
       ) : (
-        <main className="relative z-10 flex-1 p-5 md:p-7 overflow-hidden">
-          <section className="glass h-full flex flex-col overflow-hidden">
+        <main className="relative z-10 flex-1 p-5 md:p-7 overflow-hidden flex flex-col gap-3">
+          {/* Filter bar */}
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={podFilter}
+              onChange={(e) => setPodFilter(e.target.value)}
+              className="input-field h-7 text-xs py-0 px-2 w-auto font-mono"
+            >
+              <option value="all">All Pods</option>
+              {uniquePods.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              className="input-field h-7 text-xs py-0 px-2 w-auto font-mono"
+            >
+              <option value="all">All Types</option>
+              <option value="push">Push</option>
+            </select>
+
+            {activeFilters.map((f) => (
+              <span
+                key={f.label}
+                className="flex items-center gap-1 rounded-full border border-edge-glow bg-cyan-300/8 px-2.5 py-0.5 text-2xs font-mono text-cyan-300"
+              >
+                {f.label}
+                <button type="button" onClick={f.clear} className="hover:text-ink transition-colors">
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </span>
+            ))}
+
+            {activeFilters.length > 0 && (
+              <button
+                type="button"
+                onClick={() => { setPodFilter("all"); setTypeFilter("all"); }}
+                className="text-2xs font-mono text-ink-muted hover:text-ink-secondary transition-colors"
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+
+          <section className="glass flex-1 flex flex-col overflow-hidden">
             <div className="px-4 py-3 border-b border-edge-dim flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold text-ink-bright">Live Push Feed</p>
-                <p className="text-2xs text-ink-muted font-mono">Most recent 200 events</p>
+                <p className="text-2xs text-ink-muted font-mono">
+                  {filteredEvents.length} of {events.length} events
+                </p>
               </div>
               <button
                 onClick={clearEvents}
@@ -152,15 +222,21 @@ export function InstructorView() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
-              {events.length === 0 ? (
+              {filteredEvents.length === 0 ? (
                 <div className="h-full grid place-items-center text-center px-4">
                   <div>
-                    <p className="text-sm text-ink-secondary">No live events yet.</p>
-                    <p className="text-2xs text-ink-muted mt-1">Student push attempts will stream here in real time.</p>
+                    <p className="text-sm text-ink-secondary">
+                      {events.length === 0 ? "No live events yet." : "No events match filters."}
+                    </p>
+                    <p className="text-2xs text-ink-muted mt-1">
+                      {events.length === 0
+                        ? "Student push attempts will stream here in real time."
+                        : "Adjust filters to see events."}
+                    </p>
                   </div>
                 </div>
               ) : (
-                events.map((event, index) => (
+                filteredEvents.map((event, index) => (
                   <motion.div
                     key={`${event.pod_id}-${event.ts}-${index}`}
                     custom={index}

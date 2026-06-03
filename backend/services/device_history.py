@@ -34,6 +34,7 @@ async def append_device_history(
     output: str,
     elapsed_ms: float,
     pre_snapshot_id: int | None = None,
+    db: AsyncSession | None = None,
 ) -> None:
     entry = DeviceCommandHistory(
         actor_id=actor_id,
@@ -47,17 +48,29 @@ async def append_device_history(
         pre_snapshot_id=pre_snapshot_id,
     )
 
-    async with AsyncSessionLocal() as db:
+    if db is not None:
         db.add(entry)
         await db.commit()
+    else:
+        async with AsyncSessionLocal() as session:
+            session.add(entry)
+            await session.commit()
 
 
-async def fetch_device_history(db: AsyncSession, device_key: str, limit: int = 50) -> list[DeviceCommandHistory]:
+async def fetch_device_history(
+    db: AsyncSession,
+    device_key: str,
+    limit: int = 50,
+    actor_id: str | None = None,
+) -> list[DeviceCommandHistory]:
     capped_limit = min(max(limit, 1), 200)
-    result = await db.execute(
+    stmt = (
         select(DeviceCommandHistory)
         .where(DeviceCommandHistory.device_key == normalize_device_key(device_key))
         .order_by(DeviceCommandHistory.created_at.desc())
         .limit(capped_limit)
     )
+    if actor_id is not None:
+        stmt = stmt.where(DeviceCommandHistory.actor_id == actor_id)
+    result = await db.execute(stmt)
     return result.scalars().all()

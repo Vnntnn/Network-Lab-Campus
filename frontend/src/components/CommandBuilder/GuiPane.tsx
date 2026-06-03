@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Trash2, ChevronDown } from "lucide-react";
+import { Plus, Trash2, ChevronDown, Search, X as XIcon } from "lucide-react";
 import { useState } from "react";
 import {
   interfaceSchema, type InterfaceFormData,
@@ -2140,10 +2140,11 @@ function FeatureClusterCard({
   active: Feature;
   onSelect: (feature: Feature) => void;
 }) {
+  if (features.length === 0) return null;
   return (
     <div className={cn(
       "rounded-2xl border p-4 transition-all duration-200",
-      features.includes(active) ? "border-edge-glow bg-cyan-glow/6 shadow-glow-cyan-sm" : "border-edge-dim bg-depth/70"
+      features.some((f) => active === f) ? "border-edge-glow bg-cyan-glow/6 shadow-glow-cyan-sm" : "border-edge-dim bg-depth/70"
     )}>
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -2183,6 +2184,7 @@ interface GuiPaneProps {
 
 export function GuiPane({ deviceType, onCommandsChange, onFeatureChange }: GuiPaneProps) {
   const [active, setActive] = useState<Feature>("interface");
+  const [search, setSearch] = useState("");
 
   const switchFeature = (feature: Feature) => {
     setActive(feature);
@@ -2191,6 +2193,15 @@ export function GuiPane({ deviceType, onCommandsChange, onFeatureChange }: GuiPa
 
   const activeGroup = FEATURE_GROUPS.find((group) => group.features.includes(active)) ?? FEATURE_GROUPS[0];
   const activeDetails = FEATURE_DETAILS[active];
+
+  const searchLower = search.toLowerCase();
+  const filteredGroups = FEATURE_GROUPS.map((group) => ({
+    ...group,
+    features: search
+      ? group.features.filter((f) => FEATURE_LABELS[f].toLowerCase().includes(searchLower))
+      : group.features,
+  }));
+  const noResults = search.length > 0 && filteredGroups.every((g) => g.features.length === 0);
 
   return (
     <div className="flex flex-col h-full gap-4">
@@ -2204,17 +2215,43 @@ export function GuiPane({ deviceType, onCommandsChange, onFeatureChange }: GuiPa
             <span className="telemetry-chip px-2 py-0.5">{FEATURES.length} modules</span>
           </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            {FEATURE_GROUPS.map((group) => (
-              <FeatureClusterCard
-                key={group.title}
-                title={group.title}
-                summary={group.summary}
-                features={group.features}
-                active={active}
-                onSelect={switchFeature}
-              />
-            ))}
+          {/* Feature search */}
+          <div className="mt-3 relative flex items-center">
+            <Search className="absolute left-2.5 w-3 h-3 text-ink-muted pointer-events-none" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search features…"
+              className="input-field text-2xs pl-7 pr-7 h-7 w-full font-mono focus:ring-cyan-300/30"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-2 text-ink-muted hover:text-ink-secondary transition-colors"
+              >
+                <XIcon className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {noResults ? (
+              <div className="md:col-span-2 py-4 text-center text-xs text-ink-muted font-mono">
+                No features match <span className="text-ink-secondary">"{search}"</span>
+              </div>
+            ) : (
+              filteredGroups.map((group) => (
+                <FeatureClusterCard
+                  key={group.title}
+                  title={group.title}
+                  summary={group.summary}
+                  features={group.features}
+                  active={active}
+                  onSelect={switchFeature}
+                />
+              ))
+            )}
           </div>
         </section>
 
