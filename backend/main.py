@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database import AsyncSessionLocal, init_db
 from routers import pods, commands, identities, instructor, snapshots, orchestration, topology
+from services.pubsub import subscribe_loop, REDIS_URL
 from services.topology_discovery import sync_known_pod_hostnames
 
 
@@ -50,11 +51,16 @@ async def _hostname_monitor_loop(interval_sec: int) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     hostname_monitor_task: asyncio.Task | None = None
+    redis_tasks: list[asyncio.Task] = []
     await init_db()
 
     monitor_interval = _resolve_hostname_monitor_interval()
     if monitor_interval > 0:
         hostname_monitor_task = asyncio.create_task(_hostname_monitor_loop(monitor_interval))
+
+    if REDIS_URL:
+        redis_tasks.append(asyncio.create_task(subscribe_loop("topology_events", topology._local_fanout)))
+        redis_tasks.append(asyncio.create_task(subscribe_loop("instructor_events", instructor._local_broadcast)))
 
     try:
         yield
@@ -63,6 +69,10 @@ async def lifespan(app: FastAPI):
             hostname_monitor_task.cancel()
             with suppress(asyncio.CancelledError):
                 await hostname_monitor_task
+        for task in redis_tasks:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
 
 app = FastAPI(

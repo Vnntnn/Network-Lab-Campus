@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,10 +14,10 @@ from schemas import (
     TopologyDiscoverAllItem,
     TopologyDiscoverAllJobCreateResponse,
     TopologyDiscoverAllJobRead,
-    TopologyDiscoverAllResponse,
     TopologyDiscoveryResponse,
 )
 from services.ownership import get_owned_pod
+from services.pubsub import publish as redis_publish
 from services.route_analytics import build_route_analytics
 from services.topology_discovery import discover_topology
 
@@ -164,17 +164,21 @@ async def _run_discover_all_job(job_id: int) -> None:
             await failed_db.commit()
 
 
-async def broadcast(event: dict) -> None:
+async def _local_fanout(event: dict) -> None:
     dead: list[WebSocket] = []
     for ws in _clients:
         try:
             await ws.send_json(event)
         except Exception:
             dead.append(ws)
-
     for ws in dead:
         if ws in _clients:
             _clients.remove(ws)
+
+
+async def broadcast(event: dict) -> None:
+    await redis_publish("topology_events", event)
+    await _local_fanout(event)
 
 
 @router.websocket("/ws")
@@ -223,69 +227,6 @@ async def get_routes_analytics(
         raise HTTPException(status_code=404, detail="Pod not found")
 
     return await build_route_analytics(pod)
-
-
-@router.post("/discover-all", response_model=TopologyDiscoverAllResponse)
-async def discover_all(
-    response: Response,
-    max_hops: int = Query(3, ge=1, le=5),
-    db: AsyncSession = Depends(get_db),
-    actor_id: str = Depends(get_actor_id),
-):
-    response.headers["Deprecation"] = "true"
-    response.headers["Link"] = '</api/v1/topology/discover-all/jobs>; rel="successor-version"'
-    started_at = datetime.now(timezone.utc)
-    result = await db.execute(
-        select(LabPod)
-        .where(LabPod.owner_id == actor_id)
-        .order_by(LabPod.pod_number)
-    )
-    pods = result.scalars().all()
-
-    async def _discover_one(pod: LabPod) -> TopologyDiscoverAllItem:
-        try:
-            async with AsyncSessionLocal() as task_db:
-                snapshot = await discover_topology(task_db, pod.id, max_hops=max_hops, owner_id=actor_id)
-            await broadcast(
-                {
-                    "type": "topology.discovery",
-                    "seed_pod_id": snapshot.seed_pod_id,
-                    "snapshot": snapshot.model_dump(mode="json"),
-                }
-            )
-            return TopologyDiscoverAllItem(
-                pod_id=pod.id,
-                pod_name=pod.pod_name,
-                success=True,
-                discovered_at=snapshot.discovered_at,
-                node_count=len(snapshot.nodes),
-                edge_count=len(snapshot.edges),
-                warnings=snapshot.warnings,
-            )
-        except Exception as exc:  # pragma: no cover - defensive fallback for transport failures
-            detail = str(getattr(exc, "detail", exc))
-            return TopologyDiscoverAllItem(
-                pod_id=pod.id,
-                pod_name=pod.pod_name,
-                success=False,
-                error=detail,
-            )
-
-    items: list[TopologyDiscoverAllItem] = list(
-        await asyncio.gather(*[_discover_one(pod) for pod in pods])
-    )
-
-    successful = sum(1 for item in items if item.success)
-    failed = len(items) - successful
-
-    return TopologyDiscoverAllResponse(
-        started_at=started_at,
-        completed_at=datetime.now(timezone.utc),
-        total=len(items),
-        successful=successful,
-        failed=failed,
-        items=items,
-    )
 
 
 @router.post("/discover-all/jobs", response_model=TopologyDiscoverAllJobCreateResponse, status_code=202)

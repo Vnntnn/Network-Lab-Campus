@@ -1,6 +1,7 @@
 import asyncio
 import os
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from services.pubsub import publish as redis_publish
 
 router = APIRouter(prefix="/api/v1/instructor", tags=["instructor"])
 
@@ -26,9 +27,14 @@ async def _fanout(pool: list[WebSocket], event: dict) -> None:
         _drop_client(pool, ws)
 
 
-async def broadcast(event: dict):
+async def _local_broadcast(event: dict) -> None:
     await _fanout(_private_clients, event)
     await _fanout(_public_feed_clients, event)
+
+
+async def broadcast(event: dict) -> None:
+    await redis_publish("instructor_events", event)
+    await _local_broadcast(event)
 
 
 @router.websocket("/ws")
