@@ -24,6 +24,7 @@ class LabPod(Base):
     identity_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     description: Mapped[str] = mapped_column(String(256), nullable=True, default="")
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
 
 
 class CredentialIdentity(Base):

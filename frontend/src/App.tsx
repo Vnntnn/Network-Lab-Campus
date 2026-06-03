@@ -3,6 +3,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { usePodStore } from "@/stores/podStore";
 import { useAppStore } from "@/stores/appStore";
 import { ViewLoading } from "@/components/ui/ViewLoading";
+import { GlobalNav } from "@/components/ui/GlobalNav";
+import { StudentIdentity } from "@/components/ui/StudentIdentity";
 
 const PodSelector = lazy(() =>
   import("@/components/PodSelector").then((m) => ({ default: m.PodSelector }))
@@ -99,6 +101,9 @@ export default function App() {
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-void text-ink">
 
+      {/* ── Global nav (all views except selector) ── */}
+      {view !== "selector" && <GlobalNav />}
+
       {/* ── Ambient WebGL network background (non-selector views only) ── */}
       {showBg && (
         <Suspense fallback={null}>
@@ -147,6 +152,7 @@ export default function App() {
           animate="animate"
           exit="exit"
           style={{ position: "relative", width: "100%", height: "100%" }}
+          className={view !== "selector" ? "pt-9" : undefined}
         >
           <Suspense fallback={<ViewFallback label={meta.label} />}>
             {view === "admin"        && <AdminPanel />}
@@ -158,6 +164,9 @@ export default function App() {
           </Suspense>
         </motion.div>
       </AnimatePresence>
+
+      {/* ── Student identity corner badge ── */}
+      <StudentIdentity />
     </div>
   );
 }

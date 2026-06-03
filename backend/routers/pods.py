@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
@@ -7,6 +9,8 @@ from database import get_db
 from deps import DEFAULT_ACTOR_ID, get_actor_id
 from models import CredentialIdentity, LabPod, PodDisabledInterface, Snapshot
 from schemas import (
+    BulkPodImport,
+    BulkPodImportResult,
     DeviceDiscoveryRequest,
     DeviceDiscoveryResponse,
     LabPodCreate,
@@ -16,13 +20,12 @@ from schemas import (
     PodInterfaceSetRequest,
     PodInterfacesResponse,
 )
-from services.device_executor import run_show_commands
+from services.credentials import encrypt_credential
 from services.device_discovery import discover_device
+from services.device_executor import run_show_commands
 from services.identities import resolve_identity_credentials
 from services.interface_governance import get_pod_interfaces, set_interface_disabled_state
 from services.ownership import get_owned_pod
-
-from services.credentials import encrypt_credential
 
 router = APIRouter(prefix="/pods", tags=["pods"])
 
@@ -217,7 +220,6 @@ async def ping_pod(
     db: AsyncSession = Depends(get_db),
     actor_id: str = Depends(get_actor_id),
 ):
-    """SSH into the device and run 'show version' to verify reachability."""
     pod = await get_owned_pod(db, pod_id, actor_id)
     if not pod:
         raise HTTPException(status_code=404, detail="Pod not found")
@@ -225,6 +227,9 @@ async def ping_pod(
     version_line = ""
     if result.success and result.results:
         version_line = result.results[0]["output"].splitlines()[0] if result.results[0]["output"] else ""
+    if result.success:
+        pod.last_seen_at = datetime.now(timezone.utc)
+        await db.commit()
     return PingResponse(
         reachable=result.success,
         version_line=version_line,
@@ -269,7 +274,6 @@ async def set_pod_interface_state(
 async def discover_device_endpoint(
     payload: DeviceDiscoveryRequest,
 ):
-    """Auto-discover Cisco device type, hostname, and other info."""
     result = await discover_device(
         device_ip=payload.device_ip,
         username=payload.ssh_username,
@@ -278,3 +282,33 @@ async def discover_device_endpoint(
         port=payload.port,
     )
     return DeviceDiscoveryResponse(**result)
+
+
+@router.post("/bulk", response_model=BulkPodImportResult)
+async def bulk_import_pods(
+    payload: BulkPodImport,
+    db: AsyncSession = Depends(get_db),
+    actor_id: str = Depends(get_actor_id),
+):
+    created = 0
+    failed = 0
+    errors = []
+    for pod_data in payload.pods:
+        try:
+            async with db.begin_nested():
+                pod = LabPod(
+                    owner_id=actor_id,
+                    **{
+                        **pod_data.model_dump(),
+                        "ssh_username": pod_data.ssh_username or "",
+                        "ssh_password": encrypt_credential(pod_data.ssh_password or ""),
+                    },
+                )
+                db.add(pod)
+                await db.flush()
+            created += 1
+        except Exception as e:
+            failed += 1
+            errors.append(f"Pod {pod_data.pod_name}: {str(e)[:120]}")
+    await db.commit()
+    return BulkPodImportResult(created=created, failed=failed, errors=errors)

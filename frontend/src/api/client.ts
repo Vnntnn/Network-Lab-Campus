@@ -22,5 +22,13 @@ api.interceptors.request.use((config) => {
   const actorId = resolveActorId();
   config.headers = config.headers ?? {};
   (config.headers as Record<string, string>)["X-Actor-Id"] = actorId;
+
+  const actorName = typeof window !== "undefined"
+    ? (window.localStorage.getItem("actor_name") ?? "").trim().slice(0, 64)
+    : "";
+  if (actorName) {
+    (config.headers as Record<string, string>)["X-Actor-Name"] = encodeURIComponent(actorName);
+  }
+
   return config;
 });

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from deps import get_actor_id
+from deps import get_actor_id, get_actor_name
 from routers.instructor import broadcast
 from routers.snapshots import SnapshotCaptureError, capture_snapshot_background, create_snapshot_record
 from schemas import DeviceHistoryEntryRead, PushRequest, PushResponse, ShowRequest, ShowResponse
@@ -21,6 +21,7 @@ async def push_to_device(
     payload: PushRequest,
     db: AsyncSession = Depends(get_db),
     actor_id: str = Depends(get_actor_id),
+    actor_name: str | None = Depends(get_actor_name),
 ):
     pod = await get_owned_pod(db, payload.pod_id, actor_id)
     if not pod:
@@ -70,6 +71,8 @@ async def push_to_device(
             "pod_id": payload.pod_id,
             "pod_name": pod.pod_name,
             "device_ip": pod.device_ip,
+            "actor_id": actor_id,
+            "actor_name": actor_name,
             "success": result.success,
             "elapsed_ms": result.elapsed_ms,
             "command_count": len(payload.commands),
@@ -104,7 +107,22 @@ async def show_on_device(
     pod = await get_owned_pod(db, payload.pod_id, actor_id)
     if not pod:
         raise HTTPException(status_code=404, detail="Pod not found")
-    return await run_show_commands(pod, payload.commands)
+    result = await run_show_commands(pod, payload.commands)
+    try:
+        await append_device_history(
+            actor_id=actor_id,
+            device_key=pod.device_ip,
+            pod_id=pod.id,
+            pod_name=pod.pod_name,
+            commands=payload.commands,
+            success=result.success,
+            output="\n".join(r["output"] for r in result.results),
+            elapsed_ms=result.elapsed_ms,
+            pre_snapshot_id=None,
+        )
+    except Exception:
+        pass
+    return result
 
 
 @router.get("/history/device/{device_key}", response_model=list[DeviceHistoryEntryRead])

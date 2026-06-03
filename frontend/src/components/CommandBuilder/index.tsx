@@ -3,10 +3,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft, Send, Server, AlertCircle, CheckCircle2,
   PanelRightOpen, PanelRightClose, Wifi, WifiOff, Camera,
-  ChevronRight,
+  ChevronRight, Terminal, Download, Route,
 } from "lucide-react";
 import { usePodStore } from "@/stores/podStore";
-import { usePushCommands, useBackendHealth } from "@/api/queries";
+import { usePushCommands, useBackendHealth, useRunShow } from "@/api/queries";
 import { useAppStore } from "@/stores/appStore";
 import { Badge } from "@/components/ui/Badge";
 import { ViewLoading } from "@/components/ui/ViewLoading";
@@ -14,6 +14,7 @@ import { GuiPane } from "./GuiPane";
 import { TerminalPane } from "./TerminalPane";
 import { HistoryPanel } from "./HistoryPanel";
 import { SnapshotDrawer } from "./SnapshotDrawer";
+import { RouteAnalyticsPanel } from "./RouteAnalyticsPanel";
 import { type Feature } from "./verifyCommands";
 import { cn } from "@/components/ui/cn";
 
@@ -50,31 +51,83 @@ function ConnectionBadge() {
   );
 }
 
+type RightPanel = "history" | "routes" | null;
+
+function downloadText(content: string, filename: string) {
+  const blob = new Blob([content], { type: "text/plain" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function CommandBuilder() {
   const pod        = usePodStore((s) => s.selectedPod);
   const clearPod   = usePodStore((s) => s.clearPod);
   const setView    = useAppStore((s) => s.setView);
 
-  const [commands,      setCommands]      = useState<string[]>([]);
-  const [showHistory,   setShowHistory]   = useState(false);
-  const [showSnapshots, setShowSnapshots] = useState(false);
-  const [activeFeature, setActiveFeature] = useState<Feature>("interface");
+  const [commands,       setCommands]       = useState<string[]>([]);
+  const [rightPanel,     setRightPanel]     = useState<RightPanel>(null);
+  const [showSnapshots,  setShowSnapshots]  = useState(false);
+  const [activeFeature,  setActiveFeature]  = useState<Feature>("interface");
+  const [terminalOutput, setTerminalOutput] = useState<string | null>(null);
 
-  const { mutate: push, isPending, data: pushResult, error: pushError, reset } = usePushCommands();
+  const {
+    mutate: push,
+    isPending: isPushing,
+    data: pushResult,
+    reset: resetPush,
+  } = usePushCommands();
+
+  const {
+    mutate: showRun,
+    isPending: isShowRunning,
+    reset: resetShow,
+  } = useRunShow();
 
   const handlePush = useCallback(() => {
-    if (!pod || commands.length === 0 || isPending) return;
+    if (!pod || commands.length === 0 || isPushing) return;
     const activePod = pod;
-    reset();
+    resetPush();
+    resetShow();
     push(
       { pod_id: activePod.id, commands },
       {
-        onSettled: () => {
-          if (!showHistory) setShowHistory(true);
+        onSuccess: (data) => {
+          setTerminalOutput(data.output);
+          if (rightPanel === null) setRightPanel("history");
+        },
+        onError: (err) => {
+          setTerminalOutput(`Error: ${err.message}`);
         },
       }
     );
-  }, [commands, isPending, reset, push, pod, showHistory]);
+  }, [commands, isPushing, resetPush, resetShow, push, pod, rightPanel]);
+
+  const handleShowRun = useCallback(() => {
+    if (!pod || isShowRunning) return;
+    resetPush();
+    resetShow();
+    setTerminalOutput(null);
+    showRun(
+      { pod_id: pod.id, commands: ["show running-config"] },
+      {
+        onSuccess: (data) => {
+          const combined = data.results.map((r) => r.output).join("\n");
+          setTerminalOutput(combined);
+        },
+        onError: (err) => {
+          setTerminalOutput(`Error: ${err.message}`);
+        },
+      }
+    );
+  }, [pod, isShowRunning, resetPush, resetShow, showRun]);
+
+  const toggleRightPanel = (panel: "history" | "routes") => {
+    setRightPanel((prev) => (prev === panel ? null : panel));
+  };
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -99,8 +152,9 @@ export function CommandBuilder() {
     );
   }
 
-  const pushOutput = pushResult?.output ?? (pushError ? `Error: ${pushError.message}` : null);
+  const pushSuccess = pushResult?.success ?? null;
   const accent = DEVICE_ACCENT[pod.device_type] ?? "#31c4ff";
+  const showRightPanel = rightPanel !== null;
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-abyss">
@@ -151,7 +205,7 @@ export function CommandBuilder() {
         <div className="flex flex-shrink-0 items-center gap-2">
           {/* Push result pill */}
           <AnimatePresence>
-            {pushResult && (
+            {pushSuccess !== null && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.92, x: 8 }}
                 animate={{ opacity: 1, scale: 1, x: 0 }}
@@ -159,27 +213,35 @@ export function CommandBuilder() {
                 transition={{ duration: 0.18 }}
                 className={cn(
                   "hidden items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-mono sm:flex",
-                  pushResult.success
+                  pushSuccess
                     ? "border-matrix/25 bg-matrix/10 text-matrix"
                     : "border-crimson/25 bg-crimson/10 text-crimson"
                 )}
               >
-                {pushResult.success
+                {pushSuccess
                   ? <CheckCircle2 className="h-3.5 w-3.5" />
                   : <AlertCircle  className="h-3.5 w-3.5" />}
-                {pushResult.success
-                  ? `OK · ${pushResult.elapsed_ms.toFixed(0)} ms`
+                {pushSuccess
+                  ? `OK · ${pushResult!.elapsed_ms.toFixed(0)} ms`
                   : "Push failed"}
               </motion.div>
             )}
           </AnimatePresence>
 
           <button
-            onClick={() => setShowHistory((v) => !v)}
-            className={cn("btn-ghost gap-1.5 text-xs", showHistory && "border-edge-bright text-ink")}
+            onClick={() => toggleRightPanel("history")}
+            className={cn("btn-ghost gap-1.5 text-xs", rightPanel === "history" && "border-edge-bright text-ink")}
           >
-            {showHistory ? <PanelRightClose className="h-3.5 w-3.5" /> : <PanelRightOpen className="h-3.5 w-3.5" />}
+            {rightPanel === "history" ? <PanelRightClose className="h-3.5 w-3.5" /> : <PanelRightOpen className="h-3.5 w-3.5" />}
             <span className="hidden sm:inline">History</span>
+          </button>
+
+          <button
+            onClick={() => toggleRightPanel("routes")}
+            className={cn("btn-ghost gap-1.5 text-xs", rightPanel === "routes" && "border-edge-bright text-ink")}
+          >
+            <Route className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Routes</span>
           </button>
 
           <button
@@ -191,13 +253,24 @@ export function CommandBuilder() {
           </button>
 
           <button
+            onClick={handleShowRun}
+            disabled={isShowRunning}
+            className="btn-ghost gap-1.5 text-xs"
+            title="Fetch running config from device"
+          >
+            {isShowRunning
+              ? <><span className="h-3.5 w-3.5 animate-spin rounded-full border border-current border-t-transparent" /> Running…</>
+              : <><Terminal className="h-3.5 w-3.5" /><span className="hidden sm:inline">Show Run</span></>}
+          </button>
+
+          <button
             onClick={handlePush}
-            disabled={commands.length === 0 || isPending}
+            disabled={commands.length === 0 || isPushing}
             className="btn-primary"
             title="Push to device (Ctrl + Enter)"
           >
             <Send className="h-3.5 w-3.5" />
-            {isPending ? "Pushing…" : "Push"}
+            {isPushing ? "Pushing…" : "Push"}
           </button>
         </div>
       </header>
@@ -214,11 +287,11 @@ export function CommandBuilder() {
       {/* ── Workspace ───────────────────────────────────────────────────── */}
       <main className="relative z-10 flex min-h-0 flex-1 overflow-hidden">
 
-        {/* LEFT — Configuration (GuiPane, no extra wrapper) */}
+        {/* LEFT — Configuration (GuiPane) */}
         <section
           className={cn(
             "overflow-y-auto border-r border-edge-dim transition-[width] duration-[320ms] ease-out",
-            showHistory ? "w-[34%]" : "w-1/2"
+            showRightPanel ? "w-[34%]" : "w-1/2"
           )}
         >
           <div className="h-full p-4">
@@ -234,18 +307,30 @@ export function CommandBuilder() {
         <section
           className={cn(
             "overflow-hidden transition-[width] duration-[320ms] ease-out",
-            showHistory ? "w-[36%] border-r border-edge-dim" : "w-1/2"
+            showRightPanel ? "w-[36%] border-r border-edge-dim" : "w-1/2"
           )}
         >
           <div className="flex h-full min-h-0 flex-col p-4">
+            {/* Show Run output download button */}
+            {terminalOutput && !isPushing && !isShowRunning && (
+              <div className="flex justify-end mb-2 flex-shrink-0">
+                <button
+                  onClick={() => downloadText(terminalOutput, `show-run_${pod.pod_name}_${new Date().toISOString().slice(0,19)}.txt`)}
+                  className="btn-ghost text-2xs px-2 py-1 gap-1 micro-tap"
+                  title="Download output as text file"
+                >
+                  <Download className="w-3 h-3" /> Download
+                </button>
+              </div>
+            )}
             <div className="min-h-0 flex-1">
               <TerminalPane
                 podId={pod.id}
                 hostname={pod.pod_name}
                 deviceType={pod.device_type}
                 commands={commands}
-                pushOutput={pushOutput}
-                isPushing={isPending}
+                pushOutput={terminalOutput}
+                isPushing={isPushing || isShowRunning}
                 elapsedMs={pushResult?.elapsed_ms}
                 activeFeature={activeFeature}
               />
@@ -253,11 +338,11 @@ export function CommandBuilder() {
           </div>
         </section>
 
-        {/* RIGHT — History panel (slide-in) */}
+        {/* RIGHT — Sliding panel (History or Routes) */}
         <AnimatePresence initial={false}>
-          {showHistory && (
+          {showRightPanel && (
             <motion.section
-              key="history-panel"
+              key="right-panel"
               initial={{ width: 0, opacity: 0, x: 14 }}
               animate={{ width: "30%", opacity: 1, x: 0, transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] } }}
               exit={{ width: 0, opacity: 0, x: 14, transition: { duration: 0.18, ease: "easeInOut" } }}
@@ -269,7 +354,12 @@ export function CommandBuilder() {
                 exit={{ opacity: 0, y: 8, transition: { duration: 0.1 } }}
                 className="flex h-full flex-col p-4"
               >
-                <HistoryPanel deviceKey={pod.device_ip} />
+                {rightPanel === "history" && (
+                  <HistoryPanel deviceKey={pod.device_ip} />
+                )}
+                {rightPanel === "routes" && (
+                  <RouteAnalyticsPanel podId={pod.id} />
+                )}
               </motion.div>
             </motion.section>
           )}

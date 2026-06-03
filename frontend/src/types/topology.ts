@@ -45,6 +45,7 @@ export interface TopologyEdgeData extends Record<string, unknown> {
   bandwidthMbps?: number | null;
   latencyMs?: number | null;
   adminState?: "up" | "maintenance" | "down";
+  status?: "up" | "down" | "unknown";
   isDiscovery?: boolean;
   discoveryProtocols?: string[];
   discoveryNote?: string | null;

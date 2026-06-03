@@ -9,6 +9,7 @@ from database import get_db
 from deps import get_actor_id
 from models import LabPod
 from routers.instructor import broadcast
+from routers.snapshots import capture_snapshot_background
 from schemas import MultiPushRequest, MultiPushResult
 from services.device_history import append_device_history
 from services.device_executor import push_commands
@@ -31,6 +32,8 @@ async def multi_push(
     pods = result.scalars().all()
 
     async def push_one(pod: LabPod) -> MultiPushResult:
+        await capture_snapshot_background(pod.id, label="pre-multi-push", actor_id=actor_id)
+
         await broadcast(
             {
                 "type": "pod.lock",

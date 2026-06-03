@@ -69,12 +69,15 @@ export const TopologyEdge = memo(function TopologyEdge({
   const srcPort     = formatInterfaceSummary(srcIfaces, sourceLabel);
   const tgtPort     = formatInterfaceSummary(tgtIfaces, targetLabel);
   const adminState  = edgeData.adminState ?? "up";
+  const linkStatus  = edgeData.status ?? "unknown";
   const emphasized  = selected || Boolean(edgeData.recent);
 
-  // State-based color
+  // State-based color: adminState takes priority, then explicit status field
   const stateColor =
-    adminState === "down"        ? "#f7556c"
+    adminState === "down"          ? "#f7556c"
     : adminState === "maintenance" ? "#ffb857"
+    : linkStatus === "down"        ? "#f7556c"
+    : linkStatus === "up"          ? "#31c4ff"
     : "#31c4ff";
 
   const stroke      = emphasized ? `${stateColor}ee` : `${stateColor}70`;

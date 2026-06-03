@@ -78,12 +78,23 @@ class LabPodRead(LabPodBase):
     detected_device_type: str | None = None
     auto_detected: bool = False
     identity_name: str | None = None
+    last_seen_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
     @field_serializer("ssh_password")
     def _hide_password(self, v: str | None) -> None:
         return None
+
+
+class BulkPodImport(BaseModel):
+    pods: list[LabPodCreate]
+
+
+class BulkPodImportResult(BaseModel):
+    created: int
+    failed: int
+    errors: list[str]
 
 
 class DeviceDiscoveryRequest(BaseModel):
