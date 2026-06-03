@@ -99,14 +99,20 @@ def _commands_for_pod(pod: LabPod) -> list[str]:
 
 
 def _pick_output(results: list[dict]) -> tuple[str, str]:
+    best: tuple[str, str] | None = None
+    best_count = -1
+
     for result in results:
         output = (result.get("output") or "").strip()
-        if not output:
+        if not output or "[executor error]" in output:
             continue
-        if "[executor error]" in output:
-            continue
-        if "/" in output:
-            return result.get("command", "show ip route"), output
+        count = sum(1 for line in output.splitlines() if _parse_route_line(line) is not None)
+        if count > best_count:
+            best_count = count
+            best = result.get("command", "show ip route"), output
+
+    if best is not None:
+        return best
 
     if results:
         first = results[0]
@@ -136,6 +142,8 @@ async def build_route_analytics(pod: LabPod) -> RouteAnalyticsResponse:
     warnings: list[str] = []
     if not routes:
         warnings.append("No route entries were parsed from the command output.")
+    elif len(routes) > 250:
+        warnings.append(f"Route table truncated to 250 entries ({len(routes)} total parsed).")
 
     return RouteAnalyticsResponse(
         pod_id=pod.id,

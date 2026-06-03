@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from deps import get_actor_id
 from routers.instructor import broadcast
-from routers.snapshots import capture_snapshot_background, create_snapshot_record
+from routers.snapshots import SnapshotCaptureError, capture_snapshot_background, create_snapshot_record
 from schemas import DeviceHistoryEntryRead, PushRequest, PushResponse, ShowRequest, ShowResponse
 from services.device_history import append_device_history, decode_history_commands, fetch_device_history
 from services.device_executor import push_commands, run_show_commands
@@ -112,8 +112,9 @@ async def list_device_history(
     device_key: str,
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
+    actor_id: str = Depends(get_actor_id),
 ):
-    history_entries = await fetch_device_history(db=db, device_key=device_key, limit=limit)
+    history_entries = await fetch_device_history(db=db, device_key=device_key, limit=limit, actor_id=actor_id)
     return [
         DeviceHistoryEntryRead(
             id=entry.id,

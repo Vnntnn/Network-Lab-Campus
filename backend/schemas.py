@@ -1,12 +1,20 @@
 from datetime import datetime, timezone
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+import ipaddress
 from typing import Literal
-import re
+
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 
 DeviceType = Literal["arista_eos", "cisco_iosxe", "cisco_iosxr"]
 TopologyDeviceType = Literal["arista_eos", "cisco_iosxe", "cisco_iosxr", "unknown"]
+
+
+def _validate_ipv4(v: str) -> str:
+    try:
+        ipaddress.IPv4Address(v)
+    except ValueError:
+        raise ValueError(f"'{v}' is not a valid IPv4 address")
+    return v
 
 
 # ── Lab Pod ─────────────────────────────────────────────────────────────────
@@ -27,10 +35,7 @@ class LabPodBase(BaseModel):
     @field_validator("device_ip")
     @classmethod
     def validate_ipv4(cls, v: str) -> str:
-        pattern = r"^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$"
-        if not re.match(pattern, v):
-            raise ValueError(f"'{v}' is not a valid IPv4 address")
-        return v
+        return _validate_ipv4(v)
 
     @model_validator(mode="after")
     def validate_ssh_credentials(self):
@@ -64,12 +69,7 @@ class LabPodUpdate(BaseModel):
     @field_validator("device_ip")
     @classmethod
     def validate_ipv4(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        pattern = r"^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$"
-        if not re.match(pattern, v):
-            raise ValueError(f"'{v}' is not a valid IPv4 address")
-        return v
+        return _validate_ipv4(v) if v is not None else v
 
 
 
@@ -80,6 +80,10 @@ class LabPodRead(LabPodBase):
     identity_name: str | None = None
 
     model_config = {"from_attributes": True}
+
+    @field_serializer("ssh_password")
+    def _hide_password(self, v: str | None) -> None:
+        return None
 
 
 class DeviceDiscoveryRequest(BaseModel):
@@ -92,10 +96,7 @@ class DeviceDiscoveryRequest(BaseModel):
     @field_validator("device_ip")
     @classmethod
     def validate_ipv4(cls, v: str) -> str:
-        pattern = r"^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$"
-        if not re.match(pattern, v):
-            raise ValueError(f"'{v}' is not a valid IPv4 address")
-        return v
+        return _validate_ipv4(v)
 
     @model_validator(mode="after")
     def validate_ssh_credentials(self):
@@ -139,8 +140,13 @@ class IdentityUpdate(BaseModel):
 class IdentityRead(IdentityBase):
     id: int
     created_at: datetime
+    password: str = "••••••••"
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_serializer("password")
+    def _hide_password(self, v: str) -> str:
+        return "••••••••"
 
 
 class PodInterfaceRead(BaseModel):
@@ -180,10 +186,7 @@ class InterfaceConfig(BaseModel):
     @field_validator("ip_address")
     @classmethod
     def validate_ip(cls, v: str) -> str:
-        pattern = r"^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$"
-        if not re.match(pattern, v):
-            raise ValueError(f"'{v}' is not a valid IPv4 address")
-        return v
+        return _validate_ipv4(v)
 
 
 # ── OSPF Configuration ───────────────────────────────────────────────────────
@@ -202,12 +205,7 @@ class OspfConfig(BaseModel):
     @field_validator("router_id")
     @classmethod
     def validate_router_id(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        pattern = r"^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$"
-        if not re.match(pattern, v):
-            raise ValueError(f"'{v}' is not a valid router ID")
-        return v
+        return _validate_ipv4(v) if v is not None else v
 
 
 # ── VLAN Configuration ───────────────────────────────────────────────────────

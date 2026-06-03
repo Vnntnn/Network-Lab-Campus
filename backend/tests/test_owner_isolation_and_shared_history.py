@@ -62,7 +62,7 @@ async def test_pod_owner_isolation_and_scoped_uniqueness(api_client):
 
 
 @pytest.mark.asyncio
-async def test_device_history_is_shared_across_actors(api_client, monkeypatch):
+async def test_device_history_is_scoped_per_actor(api_client, monkeypatch):
     async def fake_create_snapshot_record(*, db, pod_id: int, label: str = "manual", actor_id: str | None = None):
         return SimpleNamespace(id=1000 + pod_id)
 
@@ -114,28 +114,34 @@ async def test_device_history_is_shared_across_actors(api_client, monkeypatch):
     assert push_a.json()["pre_snapshot_id"] == 1000 + pod_a["id"]
     assert push_b.json()["pre_snapshot_id"] == 1000 + pod_b["id"]
 
-    history = await api_client.get(f"/api/v1/commands/history/device/{shared_device_ip}")
+    history_as_actor_a = await api_client.get(
+        f"/api/v1/commands/history/device/{shared_device_ip}",
+        headers=actor_headers("actor-a"),
+    )
     history_as_actor_b = await api_client.get(
         f"/api/v1/commands/history/device/{shared_device_ip}",
         headers=actor_headers("actor-b"),
     )
 
-    assert history.status_code == 200, history.text
+    assert history_as_actor_a.status_code == 200, history_as_actor_a.text
     assert history_as_actor_b.status_code == 200, history_as_actor_b.text
 
-    entries = history.json()
-    entries_as_b = history_as_actor_b.json()
-    assert len(entries) == 2
-    assert len(entries_as_b) == 2
+    entries_a = history_as_actor_a.json()
+    entries_b = history_as_actor_b.json()
 
-    actor_ids = {entry["actor_id"] for entry in entries}
-    assert actor_ids == {"actor-a", "actor-b"}
+    assert len(entries_a) == 1
+    assert entries_a[0]["actor_id"] == "actor-a"
+    assert entries_a[0]["commands"] == ["hostname ACTOR_A"]
+    assert entries_a[0]["device_key"] == shared_device_ip
 
-    by_actor = {entry["actor_id"]: entry for entry in entries}
-    assert by_actor["actor-a"]["commands"] == ["hostname ACTOR_A"]
-    assert by_actor["actor-b"]["commands"] == ["hostname ACTOR_B"]
-    assert all(entry["device_key"] == shared_device_ip for entry in entries)
+    assert len(entries_b) == 1
+    assert entries_b[0]["actor_id"] == "actor-b"
+    assert entries_b[0]["commands"] == ["hostname ACTOR_B"]
+    assert entries_b[0]["device_key"] == shared_device_ip
 
-    limited = await api_client.get(f"/api/v1/commands/history/device/{shared_device_ip}?limit=1")
+    limited = await api_client.get(
+        f"/api/v1/commands/history/device/{shared_device_ip}?limit=1",
+        headers=actor_headers("actor-a"),
+    )
     assert limited.status_code == 200
     assert len(limited.json()) == 1

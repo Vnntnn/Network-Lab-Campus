@@ -4,6 +4,8 @@ from fastapi import HTTPException
 from sqlalchemy import Select, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.credentials import decrypt_credential
+
 from models import CredentialIdentity
 
 
@@ -63,7 +65,7 @@ async def resolve_identity_credentials(
         identity = await get_identity(db, actor_id, identity_id)
         if not identity:
             raise HTTPException(status_code=404, detail="Identity not found")
-        return identity.id, identity.username, identity.password, identity.name
+        return identity.id, identity.username, decrypt_credential(identity.password), identity.name
 
     trimmed_user = (username or "").strip() or None
     trimmed_pass = (password or "").strip() or None
@@ -73,6 +75,6 @@ async def resolve_identity_credentials(
 
     default_identity = await get_default_identity(db, actor_id)
     if default_identity is not None:
-        return default_identity.id, default_identity.username, default_identity.password, default_identity.name
+        return default_identity.id, default_identity.username, decrypt_credential(default_identity.password), default_identity.name
 
     return None, trimmed_user, trimmed_pass, None

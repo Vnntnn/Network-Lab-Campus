@@ -14,6 +14,8 @@ from services.identities import (
     unset_default_identity,
 )
 
+from services.credentials import encrypt_credential
+
 router = APIRouter(prefix="/identities", tags=["identities"])
 
 
@@ -45,7 +47,7 @@ async def create_identity(
         owner_id=actor_id,
         name=payload.name,
         username=payload.username,
-        password=payload.password,
+        password=encrypt_credential(payload.password),
         is_default=should_be_default,
     )
     db.add(identity)
@@ -72,6 +74,9 @@ async def update_identity(
 
     updates = payload.model_dump(exclude_unset=True)
     set_default = updates.pop("is_default", None)
+
+    if "password" in updates:
+        updates["password"] = encrypt_credential(updates["password"])
 
     for field, value in updates.items():
         setattr(identity, field, value)

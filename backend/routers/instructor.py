@@ -1,11 +1,12 @@
 import asyncio
+import os
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 router = APIRouter(prefix="/api/v1/instructor", tags=["instructor"])
 
 _private_clients: list[WebSocket] = []
 _public_feed_clients: list[WebSocket] = []
-INSTRUCTOR_PIN = "1234"
+INSTRUCTOR_PIN = os.getenv("INSTRUCTOR_PIN", "1234")
 
 
 def _drop_client(pool: list[WebSocket], ws: WebSocket) -> None:

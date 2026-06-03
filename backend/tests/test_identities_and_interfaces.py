@@ -55,7 +55,7 @@ async def test_identity_can_be_assigned_to_ssh_pod(api_client):
     assert pod["identity_id"] == identity["id"]
     assert pod["identity_name"] == "lab-default"
     assert pod["ssh_username"] == "netadmin"
-    assert pod["ssh_password"] == "secret"
+    assert pod["ssh_password"] is None
 
 
 @pytest.mark.asyncio
@@ -93,7 +93,7 @@ async def test_default_identity_fallback_on_ssh_pod(api_client):
     assert pod["identity_id"] == identity["id"]
     assert pod["identity_name"] == identity["name"]
     assert pod["ssh_username"] == identity["username"]
-    assert pod["ssh_password"] == identity["password"]
+    assert pod["ssh_password"] is None
 
 
 @pytest.mark.asyncio

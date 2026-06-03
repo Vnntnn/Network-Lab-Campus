@@ -6,6 +6,7 @@ from scrapli import AsyncScrapli, Scrapli
 
 from models import LabPod
 from schemas import PushResponse, ShowResponse
+from services.credentials import decrypt_credential
 
 # One lock per device IP — prevents race conditions when multiple students
 # target the same pod simultaneously.
@@ -27,8 +28,7 @@ def _platform_for_device_type(device_type: str) -> str:
     raise ValueError(f"Unsupported device_type '{device_type}'. Supported values: {supported}")
 
 
-def _conn_kwargs(pod: LabPod) -> dict:
-    """Build connection kwargs based on pod configuration and protocol."""
+def build_conn_kwargs(pod: LabPod) -> dict:
     kwargs = dict(
         host=pod.device_ip,
         platform=_platform_for_device_type(pod.device_type),
@@ -38,27 +38,37 @@ def _conn_kwargs(pod: LabPod) -> dict:
         timeout_ops=30,
     )
 
-    # Only add credentials if provided
     if pod.ssh_username:
         kwargs["auth_username"] = pod.ssh_username
     if pod.ssh_password:
-        kwargs["auth_password"] = pod.ssh_password
+        kwargs["auth_password"] = decrypt_credential(pod.ssh_password)
 
-    # Use connection_protocol field if available, default to ssh for backward compatibility
-    protocol = getattr(pod, "connection_protocol", "ssh")
-
-    if protocol == "telnet":
+    if pod.connection_protocol == "telnet":
         kwargs["transport"] = "telnet"
-        # Use custom telnet port if provided, otherwise use default (23)
-        telnet_port = getattr(pod, "telnet_port", None)
-        if telnet_port:
-            kwargs["port"] = telnet_port
-        else:
-            kwargs["port"] = 23
+        kwargs["port"] = pod.telnet_port or 23
     else:
         kwargs["transport"] = "asyncssh"
 
     return kwargs
+
+
+def _sync_push(pod: LabPod, commands: list[str]) -> tuple[bool, str]:
+    conn = Scrapli(**build_conn_kwargs(pod))
+    conn.open()
+    try:
+        result = conn.send_configs(commands)
+        return True, "\n".join(r.result for r in result)
+    finally:
+        conn.close()
+
+
+def _sync_show(pod: LabPod, commands: list[str]) -> list[dict]:
+    conn = Scrapli(**build_conn_kwargs(pod))
+    conn.open()
+    try:
+        return [{"command": cmd, "output": conn.send_command(cmd).result} for cmd in commands]
+    finally:
+        conn.close()
 
 
 async def push_commands(pod: LabPod, commands: list[str]) -> PushResponse:
@@ -66,26 +76,15 @@ async def push_commands(pod: LabPod, commands: list[str]) -> PushResponse:
     async with lock:
         start = time.monotonic()
         try:
-            protocol = getattr(pod, "connection_protocol", "ssh")
-            
-            if protocol == "telnet":
-                # Use synchronous Scrapli for Telnet
-                kwargs = _conn_kwargs(pod)
-                conn = Scrapli(**kwargs)
-                conn.open()
-                try:
-                    result = conn.send_configs(commands)
-                    output = "\n".join(r.result for r in result)
-                finally:
-                    conn.close()
+            if pod.connection_protocol == "telnet":
+                success, output = await asyncio.to_thread(_sync_push, pod, commands)
             else:
-                # Use AsyncScrapli for SSH
-                async with AsyncScrapli(**_conn_kwargs(pod)) as conn:
+                async with AsyncScrapli(**build_conn_kwargs(pod)) as conn:
                     result = await conn.send_configs(commands)
-                    output = "\n".join(r.result for r in result)
+                    success, output = True, "\n".join(r.result for r in result)
 
             elapsed = (time.monotonic() - start) * 1000
-            return PushResponse(success=True, output=output, elapsed_ms=round(elapsed, 2))
+            return PushResponse(success=success, output=output, elapsed_ms=round(elapsed, 2))
         except Exception as exc:
             elapsed = (time.monotonic() - start) * 1000
             return PushResponse(
@@ -96,26 +95,13 @@ async def push_commands(pod: LabPod, commands: list[str]) -> PushResponse:
 
 
 async def run_show_commands(pod: LabPod, commands: list[str]) -> ShowResponse:
-    """Send read-only show commands; does NOT acquire the device lock."""
     start = time.monotonic()
     try:
-        protocol = getattr(pod, "connection_protocol", "ssh")
-        results = []
-
-        if protocol == "telnet":
-            # Use synchronous Scrapli for Telnet
-            kwargs = _conn_kwargs(pod)
-            conn = Scrapli(**kwargs)
-            conn.open()
-            try:
-                for cmd in commands:
-                    r = conn.send_command(cmd)
-                    results.append({"command": cmd, "output": r.result})
-            finally:
-                conn.close()
+        if pod.connection_protocol == "telnet":
+            results = await asyncio.to_thread(_sync_show, pod, commands)
         else:
-            # Use AsyncScrapli for SSH
-            async with AsyncScrapli(**_conn_kwargs(pod)) as conn:
+            async with AsyncScrapli(**build_conn_kwargs(pod)) as conn:
+                results = []
                 for cmd in commands:
                     r = await conn.send_command(cmd)
                     results.append({"command": cmd, "output": r.result})
