@@ -20,12 +20,12 @@ import {
   ArrowLeft, Network, Settings, AlertCircle, RefreshCw, Check, Link2, PencilLine, RotateCcw, Unplug,
 } from "lucide-react";
 import {
-  useDiscoverAllTopology,
+  useStartDiscoverAllJob,
+  useDiscoverAllJob,
   usePodInterfaces,
   usePods,
   useSetPodInterfaceState,
   useTopologyDiscovery,
-  type DiscoverAllResponse,
   type LabPod,
 } from "@/api/queries";
 import { buildWsUrl } from "@/api/ws";
@@ -267,7 +267,7 @@ export function TopologyView() {
   const [activeEdgeId, setActiveEdgeId] = useState<string | null>(null);
   const [quickConfigPod, setQuickConfigPod] = useState<LabPod | null>(null);
   const [quickConfigCommands, setQuickConfigCommands] = useState<string[]>([]);
-  const [lastDiscoverAll, setLastDiscoverAll] = useState<DiscoverAllResponse | null>(null);
+  const [jobId, setJobId] = useState<number | null>(null);
   const [discoveryMode] = useState(true);
   const [discoverySeedId, setDiscoverySeedId] = useState<number | null>(null);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
@@ -286,8 +286,16 @@ export function TopologyView() {
   );
 
   const discoveryQuery = useTopologyDiscovery(discoverySeedId, discoveryMode);
-  const discoverAllMutation = useDiscoverAllTopology();
+  const startJobMutation = useStartDiscoverAllJob();
+  const jobQuery = useDiscoverAllJob(jobId);
   const setInterfaceStateMutation = useSetPodInterfaceState();
+
+  const isDiscovering =
+    startJobMutation.isPending ||
+    jobQuery.data?.status === "pending" ||
+    jobQuery.data?.status === "running";
+
+  const handledJobRef = useRef<number | null>(null);
 
   const discoveryNodes = useMemo(
     () => discoveryQuery.data ? enrichTopologyNodes(discoveryQuery.data.nodes as Node<DeviceNodeData>[], discoveryQuery.data.edges as Edge[]) : [],
@@ -380,6 +388,37 @@ export function TopologyView() {
   const pushLinkNotice = useCallback((tone: LinkNoticeTone, text: string) => {
     setLinkNotice({ id: Date.now(), tone, text });
   }, []);
+
+  useEffect(() => {
+    const job = jobQuery.data;
+    if (!job) return;
+    if (job.status !== "completed" && job.status !== "failed") return;
+    if (handledJobRef.current === job.id) return;
+    handledJobRef.current = job.id;
+
+    if (job.status === "completed") {
+      if (discoverySeedId !== null) {
+        void refetchDiscovery();
+      }
+
+      const previewFailures = job.items
+        .filter((entry) => !entry.success)
+        .slice(0, 2)
+        .map((entry) => entry.pod_name)
+        .join(", ");
+
+      if (job.failed > 0) {
+        pushLinkNotice(
+          "warn",
+          `Discover-all finished: ${job.successful}/${job.total} ok${previewFailures ? ` · failed: ${previewFailures}` : ""}.`
+        );
+      } else {
+        pushLinkNotice("ok", `Discover-all finished: ${job.successful}/${job.total} nodes mapped.`);
+      }
+    } else {
+      pushLinkNotice("warn", `Discover-all failed: ${job.error_message ?? "unknown error"}`);
+    }
+  }, [jobQuery.data, discoverySeedId, refetchDiscovery, pushLinkNotice]);
 
   useEffect(() => {
     if (pods) syncPods(pods);
@@ -796,42 +835,22 @@ export function TopologyView() {
     setActiveNodeId(null);
     closeQuickConfig();
 
-    discoverAllMutation.mutate(
+    startJobMutation.mutate(
       { max_hops: 3 },
       {
-        onSuccess: (result) => {
-          setLastDiscoverAll(result);
-          if (discoverySeedId !== null) {
-            void refetchDiscovery();
-          }
-
-          const previewFailures = result.items
-            .filter((entry) => !entry.success)
-            .slice(0, 2)
-            .map((entry) => entry.pod_name)
-            .join(", ");
-
-          if (result.failed > 0) {
-            pushLinkNotice(
-              "warn",
-              `Discover-all finished: ${result.successful}/${result.total} ok${previewFailures ? ` · failed: ${previewFailures}` : ""}.`
-            );
-          } else {
-            pushLinkNotice("ok", `Discover-all finished: ${result.successful}/${result.total} nodes mapped.`);
-          }
+        onSuccess: (res) => {
+          setJobId(res.job_id);
         },
         onError: (error) => {
-          pushLinkNotice("warn", `Discover-all failed: ${error.message}`);
+          pushLinkNotice("warn", `Discover-all failed to start: ${error.message}`);
         },
       }
     );
   }, [
     closeQuickConfig,
-    discoverAllMutation,
-    discoverySeedId,
+    startJobMutation,
     podCount,
     pushLinkNotice,
-    refetchDiscovery,
   ]);
 
   const openBuilderFromQuickConfig = useCallback(() => {
@@ -904,11 +923,11 @@ export function TopologyView() {
         <div className="flex items-center gap-2">
           <button
             onClick={runDiscoverAll}
-            disabled={discoverAllMutation.isPending || podCount === 0}
+            disabled={isDiscovering || podCount === 0}
             className="btn-ghost text-xs gap-1.5 micro-tap"
             title="Run discovery across all owned nodes"
           >
-            <RefreshCw className={cn("w-3.5 h-3.5", discoverAllMutation.isPending && "animate-spin")} />
+            <RefreshCw className={cn("w-3.5 h-3.5", isDiscovering && "animate-spin")} />
             Discover all
           </button>
           <button
@@ -1052,10 +1071,10 @@ export function TopologyView() {
                   <button
                     type="button"
                     onClick={runDiscoverAll}
-                    disabled={podCount === 0 || discoverAllMutation.isPending}
+                    disabled={podCount === 0 || isDiscovering}
                     className="btn-hud text-xs flex-1 micro-tap"
                   >
-                    {discoverAllMutation.isPending ? "Discovering all..." : "Discover all"}
+                    {isDiscovering ? "Discovering all..." : "Discover all"}
                   </button>
                 </div>
 
@@ -1072,12 +1091,34 @@ export function TopologyView() {
                   </p>
                 </div>
 
-                {lastDiscoverAll && (
-                  <div className="rounded-xl border border-edge-subtle bg-void/60 px-3 py-2">
-                    <p className="text-2xs font-mono uppercase tracking-[0.16em] text-ink-muted">fleet run</p>
-                    <p className="mt-1 text-2xs font-mono text-cyan-100">
-                      {lastDiscoverAll.successful}/{lastDiscoverAll.total} success · {lastDiscoverAll.failed} failed
-                    </p>
+                {jobId !== null && (
+                  <div className="rounded-xl border border-edge-subtle bg-void/60 px-3 py-2 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-2xs font-mono uppercase tracking-[0.16em] text-ink-muted">fleet run</p>
+                      <button
+                        type="button"
+                        onClick={() => { setJobId(null); startJobMutation.reset(); }}
+                        className="text-2xs font-mono text-ink-muted hover:text-ink-secondary transition-colors"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                    {isDiscovering ? (
+                      <p className="text-2xs font-mono text-cyan-100 flex items-center gap-1.5">
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                        {jobQuery.data?.total
+                          ? `Discovering ${jobQuery.data.successful + jobQuery.data.failed}/${jobQuery.data.total} pods…`
+                          : "Starting discovery…"}
+                      </p>
+                    ) : jobQuery.data?.status === "completed" ? (
+                      <p className="text-2xs font-mono text-cyan-100">
+                        {jobQuery.data.successful}/{jobQuery.data.total} success · {jobQuery.data.failed} failed
+                      </p>
+                    ) : jobQuery.data?.status === "failed" ? (
+                      <p className="text-2xs font-mono text-crimson">
+                        {jobQuery.data.error_message ?? "Discovery job failed"}
+                      </p>
+                    ) : null}
                   </div>
                 )}
 
